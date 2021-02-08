@@ -7,3 +7,4 @@ __pycache__/
 /runs
 /episode_scraping
 .directory
+.idea/
