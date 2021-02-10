@@ -1,8 +1,10 @@
 import contextlib
 import copy
+from enum import auto, Enum
 import io
 import numpy as np
 from scipy import stats
+from torch import nn
 from typing import *
 
 with contextlib.redirect_stdout(io.StringIO()):
@@ -10,27 +12,95 @@ with contextlib.redirect_stdout(io.StringIO()):
     from kaggle_environments import make
     from kaggle_environments.envs.hungry_geese.hungry_geese import Action, row_col
 
-HEAD_CENTERED_OBS = 'head_centered_obs'
-SET_OBS = 'set_obs'
-OBS_TYPES = (
-    HEAD_CENTERED_OBS,
-    SET_OBS,
-)
 
-RANK_ON_DEATH = 'rank_on_death'
-REWARD_TYPES = (
-    RANK_ON_DEATH
-)
+class ObsType(Enum):
+    """
+    An enum of all available obs_types
+    WARNING: enum order is subject to change
+    """
+    HEAD_CENTERED_OBS = auto()
+    HEAD_CENTERED_SET_OBS = auto()
+    SET_OBS = auto()
+
+    def get_obs_spec(self, n_players: int = 4) -> Tuple[int, ...]:
+        if self == ObsType.HEAD_CENTERED_OBS:
+            return -1, n_players, 11 * n_players + 3, N_ROWS, N_COLS
+        elif self == ObsType.HEAD_CENTERED_SET_OBS:
+            return -1, n_players, 13, N_ROWS, N_COLS
+        elif self == ObsType.SET_OBS:
+            return -1, 13, N_ROWS, N_COLS
+        else:
+            raise ValueError(f'ObsType not yet implemented: {self.name}')
+
+
+class RewardType(Enum):
+    EVERY_STEP_ZERO_SUM = auto()
+    RANK_ON_DEATH = auto()
+
+    def get_cumulative_reward_spec(self) -> Tuple[Optional[float], Optional[float]]:
+        """
+        The minimum/maximum cumulative available reward
+        """
+        if self == RewardType.EVERY_STEP_ZERO_SUM:
+            return 0., 1.
+        elif self == RewardType.RANK_ON_DEATH:
+            return -1., 1.
+        else:
+            raise ValueError(f'RewardType not yet implemented: {self.name}')
+
+    def get_recommended_value_activation_scale_shift_dict(self) -> Dict:
+        """
+        The recommended value activation function, value_scale, and value_shift for the Q/value model
+        """
+        if self == RewardType.EVERY_STEP_ZERO_SUM:
+            value_activation = nn.ReLU()
+            value_scale = 1.
+            value_shift = 0.
+        elif self == RewardType.RANK_ON_DEATH:
+            value_activation = nn.Tanh()
+            value_scale = 1.
+            value_shift = 0.
+        else:
+            raise ValueError(f'RewardType not yet implemented: {self.name}')
+        return {
+            'value_activation': value_activation,
+            'value_scale': value_scale,
+            'value_shift': value_shift
+        }
+
 
 HUNGER_RATE = 40.
 MAX_NUM_STEPS = 200.
 GOOSE_MAX_LEN = 99.
+N_ROWS = 7
+N_COLS = 11
 
-ACTION_SPACE = (Action.NORTH, Action.EAST, Action.SOUTH, Action.WEST)
+_DIRECTIONS_DICT = {act.to_row_col(): act.name for act in Action}
+for key, val in copy.copy(_DIRECTIONS_DICT).items():
+    if key == (-1, 0):
+        _DIRECTIONS_DICT[(6, 0)] = val
+    elif key == (1, 0):
+        _DIRECTIONS_DICT[(-6, 0)] = val
+    elif key == (0, 1):
+        _DIRECTIONS_DICT[(0, -10)] = val
+    elif key == (0, -1):
+        _DIRECTIONS_DICT[(0, 10)] = val
+    else:
+        raise ValueError(f'Unrecognized direction_dict key-val pair: {key}, {val}')
+
+
+def _get_direction(from_position: int, to_position: int) -> str:
+    from_loc = np.array(_row_col(from_position))
+    to_loc = np.array(_row_col(to_position))
+    return _DIRECTIONS_DICT[tuple(to_loc - from_loc)]
+
+
+def _row_col(position: int) -> Tuple[int, int]:
+    return row_col(position, 11)
 
 
 class GooseEnvVectorized:
-    def __init__(self, obs_type: str, reward_type: str,
+    def __init__(self, obs_type: Union[ObsType, Sequence[ObsType]], reward_type: RewardType,
                  n_envs: int = 1, n_players: int = 4, silent_reset: bool = True):
         self.obs_type = obs_type
         self.reward_type = reward_type
@@ -38,10 +108,11 @@ class GooseEnvVectorized:
         self.n_players = n_players
         self.silent_reset = silent_reset
 
-        self.multi_obs_type = type(self.obs_type) != str
+        self.multi_obs_type = type(self.obs_type) != ObsType
         self.wrapped_envs = [make('hungry_geese') for _ in range(self.n_envs)]
-        self.agent_dones = np.zeros((self.n_envs, self.n_players))
+        self.agent_dones = np.zeros((self.n_envs, self.n_players), dtype=np.bool)
         self.goose_head_locs = np.zeros((self.n_envs, self.n_players, 2), dtype=np.int64)
+        self.available_actions_mask = np.ones((self.n_envs, self.n_players, 4), dtype=np.bool)
         self.episodes_finished_last_turn = np.zeros(self.n_envs, dtype=np.bool)
         self.episodes_finished_last_turn_info = [{} for _ in range(self.n_envs)]
 
@@ -67,7 +138,7 @@ class GooseEnvVectorized:
 
     def _soft_reset(self):
         """
-        Only resets environments that are done
+        Only resets environments that are done, but does not return an observation
         """
         self._reset_specific_envs(self.episodes_done)
         self._update_other_info()
@@ -79,7 +150,7 @@ class GooseEnvVectorized:
                 self.episodes_finished_last_turn[env_idx] = True
                 finished_episode_info = {
                     'goose_death_times': [agent['reward'] // (GOOSE_MAX_LEN + 1.) for agent in env.steps[-1]],
-                    'goose_lengths': [agent['reward'] % (GOOSE_MAX_LEN + 1.) for agent in env.steps[-1]],
+                    'goose_lengths': [max(agent['reward'] % (GOOSE_MAX_LEN + 1.), 1.) for agent in env.steps[-1]],
                     'goose_rankings': stats.rankdata([agent['reward'] for agent in env.steps[-1]], method='max'),
                     'n_steps': env.steps[-1][0]['observation']['step'],
                 }
@@ -97,23 +168,48 @@ class GooseEnvVectorized:
         if self.episodes_done.any():
             raise RuntimeError('The environment needs to be reset, or silent_reset needs to be True')
         assert np.all(0 <= actions)
-        assert np.all(actions < len(ACTION_SPACE))
+        assert np.all(actions < len(Action))
         agent_already_dones = self.agent_dones.copy()
 
         current_standings = np.zeros((self.n_envs, self.n_players))
         for i in range(self.n_envs):
-            observations = self.wrapped_envs[i].step([ACTION_SPACE[act].name for act in actions[i]])
+            observations = self.wrapped_envs[i].step([tuple(Action)[act].name for act in actions[i]])
             self.agent_dones[i] = [agent['status'] == 'DONE' for agent in observations]
             current_standings[i] = [agent['reward'] for agent in observations]
+        agent_rankings = stats.rankdata(current_standings, method='max', axis=1)
 
         rewards = np.zeros((self.n_envs, self.n_players))
-        if self.reward_type == RANK_ON_DEATH:
-            reward_range = np.linspace(-1., 1., self.n_players)
-            agent_rankings = stats.rankdata(current_standings, method='max', axis=1) - 1
+        if self.reward_type == RewardType.EVERY_STEP_ZERO_SUM:
+            # For the episodes that aren't finished, a reward of 1 is divided among the remaining players
+            epsilon = 1e-10
             rewards = np.where(
-                np.abs(agent_already_dones - self.agent_dones),
-                reward_range[agent_rankings],
+                ~self.agent_dones,
+                1. / ((~self.agent_dones).sum(axis=1, keepdims=True) + epsilon),
+                0.
+            )
+            n_steps_remaining = [MAX_NUM_STEPS - env.steps[-1][0]['observation']['step'] for env in self.wrapped_envs]
+            n_steps_remaining = np.array(n_steps_remaining, dtype=np.float32)[:, np.newaxis]
+            assert np.all(n_steps_remaining > 0)
+            # Awards 1st place all remaining points
+            # There is a tactical edge case where 2nd should get more reward than 3rd, but does not
+            n_first_places = (current_standings == current_standings.max(axis=1, keepdims=True)).sum(axis=1,
+                                                                                                     keepdims=True)
+            rewards = np.where(
+                self.agent_dones.all(axis=1, keepdims=True),
+                np.where(
+                    current_standings == current_standings.max(axis=1, keepdims=True),
+                    n_steps_remaining / n_first_places,
+                    0.
+                ),
                 rewards
+            )
+            rewards = rewards / MAX_NUM_STEPS
+        elif self.reward_type == RewardType.RANK_ON_DEATH:
+            reward_range = np.linspace(-1., 1., self.n_players)
+            rewards = np.where(
+                np.logical_xor(agent_already_dones, self.agent_dones),
+                reward_range[agent_rankings - 1],
+                0.
             )
         else:
             raise ValueError(f'Unsupported reward_type: {self.reward_type}')
@@ -126,22 +222,166 @@ class GooseEnvVectorized:
         return self.obs, rewards, agent_dones_cached, self.info_dict
 
     @property
-    def obs(self):
+    def obs(self) -> Union[np.ndarray, List[np.ndarray]]:
         if self.multi_obs_type:
             return [self._get_obs(ot) for ot in self.obs_type]
         else:
             return self._get_obs(self.obs_type)
 
-    def _get_obs(self, obs_type: str):
-        if obs_type == HEAD_CENTERED_OBS:
+    def _get_obs(self, obs_type: ObsType) -> np.ndarray:
+        if obs_type == ObsType.HEAD_CENTERED_OBS:
             obs = self._get_head_centered_obs()
-        elif obs_type == SET_OBS:
+        elif obs_type == ObsType.HEAD_CENTERED_SET_OBS:
+            obs = self._get_head_centered_set_obs()
+        elif obs_type == ObsType.SET_OBS:
             obs = self._get_set_obs()
         else:
             raise ValueError(f'Unsupported obs_type: {obs_type}')
         return obs
 
     def _get_head_centered_obs(self) -> np.ndarray:
+        """
+        Returns a tensor of shape (n_envs, n_players, 3 + 11*n_players, 7, 11)
+        Axes represent (n_envs, n_players, n_channels, n_rows, n_cols)
+        The channels contain the following information about each cell of the board:
+        for i in range (n_players): (myself always first)
+            * contains_head[i]
+            * goose_length[i] (normalized to be in the range 0-1)
+            * last_action_n[i]
+            * last_action_e[i]
+            * last_action_s[i]
+            * last_action_w[i]
+            * contains_body[i]
+            * connected_n[i] (only active when contains_head or contains_body)
+            * connected_e[i] (only active when contains_head or contains_body)
+            * connected_s[i] (only active when contains_head or contains_body)
+            * connected_w[i] (only active when contains_head or contains_body)
+        * contains_food
+        * steps_since_starvation (normalized to be in the range 0-1)
+        * current_step (normalized to be in the range 0-1)
+        """
+        player_channel_list = [
+            'contains_head',
+            'goose_length',
+            'last_action_n',
+            'last_action_e',
+            'last_action_s',
+            'last_action_w',
+            'contains_body',
+            'connected_n',
+            'connected_e',
+            'connected_s',
+            'connected_w',
+        ]
+        idx_dict = {c: i for i, c in enumerate(player_channel_list)}
+        last_action_dict = {
+            Action.NORTH.name: 'last_action_n',
+            Action.EAST.name: 'last_action_e',
+            Action.SOUTH.name: 'last_action_s',
+            Action.WEST.name: 'last_action_w'
+        }
+        connected_dict = {
+            Action.NORTH.name: 'connected_n',
+            Action.EAST.name: 'connected_e',
+            Action.SOUTH.name: 'connected_s',
+            Action.WEST.name: 'connected_w'
+        }
+
+        player_channels = np.zeros((self.n_envs,
+                                    self.n_players,
+                                    len(player_channel_list) * self.n_players,
+                                    N_ROWS,
+                                    N_COLS),
+                                   dtype=np.float32)
+        contains_food = np.zeros((self.n_envs, self.n_players, 1, N_ROWS, N_COLS), dtype=np.float32)
+        steps_since_starvation = np.zeros_like(contains_food)
+        current_step = np.zeros_like(contains_food)
+
+        for env_idx, env in enumerate(self.wrapped_envs):
+            observation = env.steps[-1]
+            for food_loc_n in observation[0]['observation']['food']:
+                food_loc = _row_col(food_loc_n)
+                contains_food[env_idx, :, :, food_loc[0], food_loc[1]] = 1.
+            steps_since_starvation[env_idx] = observation[0]['observation']['step'] % HUNGER_RATE
+            current_step[env_idx] = observation[0]['observation']['step']
+            for main_agent_idx in range(self.n_players):
+                for agent_idx in range(self.n_players):
+                    if agent_idx == main_agent_idx:
+                        channel_idx_base = 0
+                    elif agent_idx < main_agent_idx:
+                        channel_idx_base = (agent_idx + 1) * len(player_channel_list)
+                    else:
+                        channel_idx_base = agent_idx * len(player_channel_list)
+                    goose_loc_list = observation[0]['observation']['geese'][agent_idx]
+                    # Make sure the goose is still alive
+                    if len(goose_loc_list) > 0:
+                        head_loc = _row_col(goose_loc_list[0])
+                        player_channels[env_idx,
+                                        main_agent_idx,
+                                        channel_idx_base + idx_dict['contains_head'],
+                                        (*head_loc)] = 1.
+                        goose_len = float(len(goose_loc_list))
+                        player_channels[env_idx,
+                                        main_agent_idx,
+                                        channel_idx_base + idx_dict['goose_length']] = goose_len / (N_ROWS * N_COLS)
+                        if observation[0]['observation']['step'] > 0:
+                            last_action_channel = last_action_dict[observation[agent_idx]['action']]
+                            player_channels[env_idx,
+                                            main_agent_idx,
+                                            channel_idx_base + idx_dict[last_action_channel]] = 1.
+                    # Make sure the goose is more than just a head
+                    if len(goose_loc_list) > 1:
+                        for body_loc_n in goose_loc_list[1:]:
+                            body_loc = _row_col(body_loc_n)
+                            player_channels[env_idx,
+                                            main_agent_idx,
+                                            channel_idx_base + idx_dict['contains_body'],
+                                            (*body_loc)] = 1.
+                        for i in range(len(goose_loc_list) - 1):
+                            connection_channel = connected_dict[_get_direction(
+                                goose_loc_list[i],
+                                goose_loc_list[i + 1]
+                            )]
+                            body_loc = _row_col(goose_loc_list[i])
+                            player_channels[env_idx,
+                                            main_agent_idx,
+                                            channel_idx_base + idx_dict[connection_channel],
+                                            (*body_loc)] = 1.
+                            next_connection_channel = connected_dict[_get_direction(
+                                goose_loc_list[i + 1],
+                                goose_loc_list[i]
+                            )]
+                            next_body_loc = _row_col(goose_loc_list[i + 1])
+                            player_channels[env_idx,
+                                            main_agent_idx,
+                                            channel_idx_base + idx_dict[next_connection_channel],
+                                            (*next_body_loc)] = 1.
+        obs = np.concatenate([
+            player_channels,
+            contains_food,
+            steps_since_starvation / HUNGER_RATE,
+            current_step / MAX_NUM_STEPS
+        ], axis=2)
+        for env_idx in range(self.n_envs):
+            for centered_agent_idx in range(self.n_players):
+                if not self.agent_dones[env_idx, centered_agent_idx]:
+                    head_loc = self.goose_head_locs[env_idx, centered_agent_idx]
+                    translation = np.array([int((N_ROWS-1)/2), int((N_COLS-1)/2)]) - head_loc
+                    obs[env_idx, centered_agent_idx] = np.roll(
+                        obs[env_idx, centered_agent_idx], translation, axis=(-2, -1)
+                    )
+                    if obs[env_idx,
+                           centered_agent_idx,
+                           0,
+                           int((N_ROWS-1)/2),
+                           int((N_COLS-1)/2)] != 1.:
+                        print('Head not centered!')
+                        print(head_loc)
+                        print(obs[env_idx, centered_agent_idx, 0])
+                        assert False
+        return obs
+
+    def _get_head_centered_set_obs(self) -> np.ndarray:
         """
         Returns a tensor of shape (n_envs, n_players, 13, 7, 11)
         Axes represent (n_envs, n_players, n_channels, n_rows, n_cols)
@@ -162,7 +402,7 @@ class GooseEnvVectorized:
         * steps_since_starvation (normalized to be in the range 0-1)
         * current_step (normalized to be in the range 0-1)
         """
-        contains_head = np.zeros((self.n_envs, self.n_players, 7, 11), dtype=np.float32)
+        contains_head = np.zeros((self.n_envs, self.n_players, N_ROWS, N_COLS), dtype=np.float32)
         contains_food = np.zeros_like(contains_head)
         contains_body = np.zeros_like(contains_head)
         connected_n = np.zeros_like(contains_head)
@@ -277,7 +517,7 @@ class GooseEnvVectorized:
         * steps_since_starvation (normalized to be in the range 0-1)
         * current_step (normalized to be in the range 0-1)
         """
-        contains_head = np.zeros((self.n_envs, 7, 11), dtype=np.float32)
+        contains_head = np.zeros((self.n_envs, N_ROWS, N_COLS), dtype=np.float32)
         contains_food = np.zeros_like(contains_head)
         contains_body = np.zeros_like(contains_head)
         connected_n = np.zeros_like(contains_head)
@@ -359,11 +599,19 @@ class GooseEnvVectorized:
             for agent_idx, goose_loc_list in enumerate(env.steps[-1][0]['observation']['geese']):
                 if len(goose_loc_list) > 0:
                     self.goose_head_locs[env_idx, agent_idx] = _row_col(goose_loc_list[0])
+        self.available_actions_mask = np.ones((self.n_envs, self.n_players, 4), dtype=np.bool)
+        for env_idx, env in enumerate(self.wrapped_envs):
+            if env.steps[-1][0]['observation']['step'] > 0:
+                for agent_idx, agent in enumerate(env.steps[-1]):
+                    last_action = Action[agent['action']]
+                    banned_action = list(Action).index(last_action.opposite())
+                    self.available_actions_mask[env_idx, agent_idx, banned_action] = False
 
     @property
     def info_dict(self) -> Dict:
         return {
             'head_positions': self.goose_head_locs,
+            'available_actions_mask': self.available_actions_mask,
             'episodes_finished_last_turn': self.episodes_finished_last_turn,
             'episodes_finished_last_turn_info': self.episodes_finished_last_turn_info,
         }
@@ -371,37 +619,3 @@ class GooseEnvVectorized:
     @property
     def episodes_done(self):
         return self.agent_dones.all(axis=1)
-
-    @staticmethod
-    def get_obs_spec(obs_type: str) -> Tuple[int, ...]:
-        board_shape = (7, 11)
-        if obs_type == HEAD_CENTERED_OBS:
-            return -1, -1, 13, board_shape[0], board_shape[1]
-        elif obs_type == SET_OBS:
-            return -1, 13, board_shape[0], board_shape[1]
-        else:
-            raise ValueError(f'Unrecognized obs_type: {obs_type}')
-
-
-_DIRECTIONS_DICT = {act.to_row_col(): act.name for act in ACTION_SPACE}
-for key, val in copy.copy(_DIRECTIONS_DICT).items():
-    if key == (-1, 0):
-        _DIRECTIONS_DICT[(6, 0)] = val
-    elif key == (1, 0):
-        _DIRECTIONS_DICT[(-6, 0)] = val
-    elif key == (0, 1):
-        _DIRECTIONS_DICT[(0, -10)] = val
-    elif key == (0, -1):
-        _DIRECTIONS_DICT[(0, 10)] = val
-    else:
-        raise ValueError(f'Unrecognized direction_dict key-val pair: {key}, {val}')
-
-
-def _get_direction(from_position: int, to_position: int) -> str:
-    from_loc = np.array(_row_col(from_position))
-    to_loc = np.array(_row_col(to_position))
-    return _DIRECTIONS_DICT[tuple(to_loc - from_loc)]
-
-
-def _row_col(position: int) -> Tuple[int, int]:
-    return row_col(position, 11)
