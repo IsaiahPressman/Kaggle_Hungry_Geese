@@ -176,7 +176,6 @@ class GooseEnvVectorized:
             observations = self.wrapped_envs[i].step([tuple(Action)[act].name for act in actions[i]])
             self.agent_dones[i] = [agent['status'] == 'DONE' for agent in observations]
             current_standings[i] = [agent['reward'] for agent in observations]
-        agent_rankings = stats.rankdata(current_standings, method='max', axis=1)
 
         rewards = np.zeros((self.n_envs, self.n_players))
         if self.reward_type == RewardType.EVERY_STEP_ZERO_SUM:
@@ -205,10 +204,12 @@ class GooseEnvVectorized:
             )
             rewards = rewards / MAX_NUM_STEPS
         elif self.reward_type == RewardType.RANK_ON_DEATH:
-            reward_range = np.linspace(-1., 1., self.n_players)
+            agent_rankings = stats.rankdata(current_standings, method='average', axis=1)
+            # Rescale rankings from 1 to n_players to lie between -1 to 1
+            agent_rankings = 2. * (agent_rankings - 1.) / (self.n_players - 1.) - 1.
             rewards = np.where(
                 np.logical_xor(agent_already_dones, self.agent_dones),
-                reward_range[agent_rankings - 1],
+                agent_rankings,
                 0.
             )
         else:
