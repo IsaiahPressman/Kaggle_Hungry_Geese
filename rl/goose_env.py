@@ -315,10 +315,31 @@ class GooseEnvVectorized:
                 if env.steps[-1][0]['observation']['step'] > 0:
                     for agent_idx, agent in enumerate(env.steps[-1]):
                         last_action = Action[agent['action']]
-                        banned_action = list(Action).index(last_action.opposite())
-                        self.available_actions_mask[env_idx, agent_idx, banned_action] = False
+                        banned_action_idx = list(Action).index(last_action.opposite())
+                        self.available_actions_mask[env_idx, agent_idx, banned_action_idx] = False
         elif self.action_masking == ActionMasking.FULL:
-            assert False, 'Not yet implemented'
+            for env_idx, env in enumerate(self.wrapped_envs):
+                if env.steps[-1][0]['observation']['step'] > 0:
+                    all_goose_locs = []
+                    for goose_loc_list in env.steps[-1][0]['observation']['geese']:
+                        # Ignore geese that are only a head
+                        if len(goose_loc_list) > 1:
+                            # Don't mask the tail position
+                            all_goose_locs += [_row_col(n) for n in goose_loc_list[:-1]]
+                    for agent_idx, agent in enumerate(env.steps[-1]):
+                        goose_loc_list = env.steps[-1][0]['observation']['geese'][agent_idx]
+                        if len(goose_loc_list) > 0:
+                            last_action = Action[agent['action']]
+                            banned_action_idx = list(Action).index(last_action.opposite())
+                            self.available_actions_mask[env_idx, agent_idx, banned_action_idx] = False
+                            head_loc = np.array(_row_col(goose_loc_list[0]))
+                            for act in list(Action):
+                                destination = head_loc + np.array(act.to_row_col())
+                                destination[0] = (N_ROWS + destination[0]) % N_ROWS
+                                destination[1] = (N_COLS + destination[1]) % N_COLS
+                                if tuple(destination) in all_goose_locs:
+                                    banned_action_idx = list(Action).index(act)
+                                    self.available_actions_mask[env_idx, agent_idx, banned_action_idx] = False
         else:
             raise ValueError(f'Unrecognized action_masking: {self.action_masking}')
         self.kaggle_rewards = np.array([[agent['reward'] for agent in env.steps[-1]] for env in self.wrapped_envs])

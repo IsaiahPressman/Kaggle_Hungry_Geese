@@ -212,6 +212,7 @@ class DeepQNetwork(nn.Module):
     def __init__(self,
                  optimizer_constructor,
                  epsilon: Optional[float] = None,
+                 softmax_exploration: bool = False,
                  delayed_updates: bool = False,
                  double_q: bool = False,
                  dueling_q: bool = False,
@@ -221,6 +222,7 @@ class DeepQNetwork(nn.Module):
         super(DeepQNetwork, self).__init__()
 
         self.epsilon = epsilon
+        self.softmax_exploration = softmax_exploration
         self.delayed_updates = delayed_updates
         self.double_q = double_q
         self.dueling_q = dueling_q
@@ -257,11 +259,19 @@ class DeepQNetwork(nn.Module):
             q_vals = self.forward(states)
         if available_actions_mask is not None:
             q_vals.masked_fill_(~available_actions_mask, float('-inf'))
+        if self.softmax_exploration:
+            logits = q_vals
+        else:
+            logits = torch.where(
+                q_vals.isneginf(),
+                q_vals,
+                torch.zeros_like(q_vals)
+            )
         # In case all actions are masked, select one at random
         probs = F.softmax(torch.where(
-            q_vals.isneginf().all(axis=-1, keepdim=True),
-            torch.zeros_like(q_vals),
-            q_vals * 10
+            logits.isneginf().all(axis=-1, keepdim=True),
+            torch.zeros_like(logits),
+            logits * 10
         ), dim=-1)
         m = distributions.Categorical(probs)
         sampled_actions = m.sample()
@@ -270,29 +280,6 @@ class DeepQNetwork(nn.Module):
             sampled_actions.unsqueeze(-1),
             q_vals.argmax(dim=-1, keepdim=True)
         )
-        """
-        # Old method
-        if available_actions_mask is not None:
-            q_vals.masked_fill_(~available_actions_mask, float('-inf'))
-            actions_with_exploration = torch.where(
-                torch.rand(size=(q_vals.shape[0], 1), device=states.device) < epsilon,
-                torch.randint(q_vals.shape[-1], size=(q_vals.shape[0], 1), device=states.device),
-                q_vals.argmax(dim=-1, keepdim=True)
-            )
-            actions_with_exploration = torch.where(
-                available_actions_mask.gather(1, actions_with_exploration),
-                actions_with_exploration,
-                (actions_with_exploration + torch.randint_like(actions_with_exploration, low=1, high=4)) % 4
-            )
-            assert available_actions_mask.gather(1, actions_with_exploration).all()
-            actions = actions_with_exploration.squeeze(-1)
-        else:
-            actions = torch.where(
-                torch.rand(q_vals.shape[0], device=states.device) < epsilon,
-                torch.randint(q_vals.shape[-1], size=(q_vals.shape[0],), device=states.device),
-                q_vals.argmax(dim=-1)
-            )"""
-
         if get_preds:
             return actions, q_vals
         else:

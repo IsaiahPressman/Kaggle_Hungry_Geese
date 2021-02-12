@@ -310,7 +310,7 @@ class DeepQ:
         if self.checkpoint_render_n_games > 0:
             save_dir = checkpoint_dir / 'replays'
             save_dir.mkdir()
-            rendering_env = ge.GooseEnvVectorized(self.env.obs_type, self.env.reward_type,
+            rendering_env = ge.GooseEnvVectorized(self.env.obs_type, self.env.reward_type, self.env.action_masking,
                                                   n_envs=min(self.env.n_envs, self.checkpoint_render_n_games),
                                                   silent_reset=False)
             n_envs_rendered = 0
