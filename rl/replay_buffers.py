@@ -96,7 +96,7 @@ class DataAugmentationReplayBuffer(BasicReplayBuffer):
         s_batch, a_batch, r_batch, d_batch, next_s_batch = super().get_samples_batch(sample_size)
         if self.obs_type == ge.ObsType.SET_OBS:
             assert False, 'Not yet implemented'
-        elif self.obs_type == ge.ObsType.HEAD_CENTERED_OBS:
+        elif self.obs_type == ge.ObsType.HEAD_CENTERED_OBS_LARGE:
             n_geese = (s_batch.shape[1] - 3) / 11
             # Flip rows
             if random.random() < 0.5:
@@ -139,6 +139,28 @@ class DataAugmentationReplayBuffer(BasicReplayBuffer):
                     np.arange(11),
                     (new_other_goose_idxs[:, np.newaxis] * 11 + np.arange(11)).ravel(),
                     np.arange(n_geese * 11, n_geese * 11 + 3)
+                ])
+                s_batch = s_batch[:, new_channel_idxs_full]
+                next_s_batch = next_s_batch[:, new_channel_idxs_full]
+        elif self.obs_type == ge.ObsType.HEAD_CENTERED_OBS_SMALL:
+            n_geese = (s_batch.shape[1] - 3) / 3
+            # Flip rows
+            if random.random() < 0.5:
+                s_batch = torch.flip(s_batch, dims=(-2,))
+                a_batch = flip_a_batch(a_batch, 'rows')
+                next_s_batch = torch.flip(next_s_batch, dims=(-2,))
+            # Flip columns
+            if random.random() < 0.5:
+                s_batch = torch.flip(s_batch, dims=(-1,))
+                a_batch = flip_a_batch(a_batch, 'cols')
+                next_s_batch = torch.flip(next_s_batch, dims=(-1,))
+            # Randomly shuffle channels pertaining to geese other than oneself
+            if self.use_channel_shuffle:
+                new_other_goose_idxs = np.random.permutation(np.arange(1, n_geese))
+                new_channel_idxs_full = np.concatenate([
+                    np.arange(3),
+                    (new_other_goose_idxs[:, np.newaxis] * 3 + np.arange(3)).ravel(),
+                    np.arange(n_geese * 3, n_geese * 3 + 3)
                 ])
                 s_batch = s_batch[:, new_channel_idxs_full]
                 next_s_batch = next_s_batch[:, new_channel_idxs_full]

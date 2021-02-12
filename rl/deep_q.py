@@ -71,22 +71,30 @@ class DeepQ:
         self.summary_writer.add_graph(self.q_model, dummy_input)
 
     def train(self, batch_size, n_epochs, n_steps_per_epoch,
-              n_train_batches_per_epoch=None, gamma=0.99):
-        if n_train_batches_per_epoch is None:
-            n_train_batches_per_epoch = n_steps_per_epoch
+              train_frequency, n_train_batches, gamma=0.99, epsilon_scheduler=None):
+        self.env.hard_reset()
         for epoch in range(n_epochs):
             print(f'Epoch #{epoch}:')
-            print(f'Sampling {n_steps_per_epoch} time-steps from the environment')
+            print(f'Sampling {n_steps_per_epoch} time-steps from the environment and '
+                  f'training on {n_train_batches} batches every {train_frequency} steps.')
             epoch_start_time = time.time()
             finished_episode_infos = []
             self.q_model.eval()
-            s, r, done, info_dict = self.env.hard_reset()
+            s, r, done, info_dict = self.env.soft_reset()
             s = torch.from_numpy(s)
             done = torch.from_numpy(done)
-            for _ in tqdm.trange(n_steps_per_epoch):
+            for step in tqdm.trange(n_steps_per_epoch):
                 start_time = time.time()
                 still_playing_mask = torch.logical_not(done)
                 s_shape = s.shape
+                if epsilon_scheduler is not None:
+                    epsilon = epsilon_scheduler(self.train_step_counter)
+                    epsilon_expanded = epsilon.expand(
+                        self.env.n_envs,
+                        self.env.n_players
+                    ).reshape(-1, 1).to(device=self.device)
+                else:
+                    epsilon_expanded = None
                 if self.use_action_masking:
                     available_actions_mask = torch.from_numpy(
                         info_dict['available_actions_mask']
@@ -95,6 +103,7 @@ class DeepQ:
                     available_actions_mask = None
                 a = self.q_model.sample_action(
                     s.to(device=self.device).view(-1, *s_shape[-3:]),
+                    epsilon=epsilon_expanded,
                     available_actions_mask=available_actions_mask
                 ).detach().cpu()
                 # a = self.q_model.sample_action(s.to(device=self.device).view(-1, *s_shape[-3:])).detach().cpu()
@@ -110,9 +119,11 @@ class DeepQ:
                     done[still_playing_mask].reshape(-1).clone(),
                     next_s[still_playing_mask].reshape(-1, *next_s.shape[-3:]).clone()
                 )
-                self.summary_writer.add_scalar(f'Info/replay_buffer_size',
-                                               len(self.replay_buffer),
-                                               self.train_step_counter)
+                if epsilon_expanded is not None:
+                    for eps_idx, eps in enumerate(epsilon.view(-1)):
+                        self.summary_writer.add_scalar(f'Info/epsilon_{eps_idx}',
+                                                       eps,
+                                                       self.train_step_counter)
                 self.summary_writer.add_scalar(f'Info/replay_buffer__top',
                                                self.replay_buffer._top,
                                                self.train_step_counter)
@@ -128,10 +139,11 @@ class DeepQ:
                                                self.train_step_counter)
                 self.train_step_counter += 1
 
-            self.q_model.train()
-            print(f'Training on {n_train_batches_per_epoch} batches from the replay buffer')
-            for _ in tqdm.trange(n_train_batches_per_epoch):
-                self.train_on_batch(batch_size, gamma)
+                if step % train_frequency == 0:
+                    self.q_model.train()
+                    for _ in range(n_train_batches):
+                        self.train_on_batch(batch_size, gamma)
+                    self.q_model.eval()
 
             self.log_epoch(finished_episode_infos)
             self.epoch_counter += 1
@@ -168,6 +180,9 @@ class DeepQ:
         all_n_steps = np.array([fei['n_steps'] for fei in finished_episode_infos])
         all_goose_death_times = np.array([fei['goose_death_times'] for fei in finished_episode_infos]).ravel()
         all_goose_lengths = np.array([fei['goose_lengths'] for fei in finished_episode_infos]).ravel()
+        _all_goose_rankings = np.array([fei['goose_rankings'] for fei in finished_episode_infos]).ravel()
+        all_winning_goose_lengths = all_goose_lengths[_all_goose_rankings == self.env.n_players]
+
         self.summary_writer.add_scalar(f'Epoch/mean_n_steps',
                                        all_n_steps.mean(),
                                        self.epoch_counter)
@@ -176,6 +191,9 @@ class DeepQ:
                                        self.epoch_counter)
         self.summary_writer.add_scalar('Epoch/mean_goose_lengths',
                                        all_goose_lengths.mean(),
+                                       self.epoch_counter)
+        self.summary_writer.add_scalar('Epoch/mean_winning_goose_lengths',
+                                       all_winning_goose_lengths.mean(),
                                        self.epoch_counter)
 
         self.summary_writer.add_histogram(f'Epoch/n_steps',
@@ -187,20 +205,27 @@ class DeepQ:
         self.summary_writer.add_histogram('Epoch/goose_lengths',
                                           all_goose_lengths,
                                           self.epoch_counter)
+        self.summary_writer.add_histogram('Epoch/winning_goose_lengths',
+                                          all_winning_goose_lengths,
+                                          self.epoch_counter)
 
     def checkpoint(self):
+        checkpoint_start_time = time.time()
         for name, param in self.q_model.named_parameters():
             if param.requires_grad:
                 self.summary_writer.add_histogram(
-                    f'params/{name}',
+                    f'Parameters/{name}',
                     param.detach().cpu().clone().numpy(),
-                    self.epoch_counter
+                    int(self.epoch_counter / self.checkpoint_freq)
                 )
         checkpoint_dir = self.exp_folder / f'{self.epoch_counter:04}'
         checkpoint_dir.mkdir()
         self.run_validation()
         self.render_n_games(checkpoint_dir)
         self.save(checkpoint_dir)
+        self.summary_writer.add_scalar('Time/checkpoint_time_s',
+                                       (time.time() - checkpoint_start_time),
+                                       int(self.epoch_counter / self.checkpoint_freq))
 
     def run_validation(self):
         return None
@@ -332,4 +357,8 @@ class DeepQ:
         serialized_string = base64.b64encode(state_dict_bytes)
         with open(save_dir / 'cp.txt', 'w') as f:
             f.write(str(serialized_string))
+        q_state_dict_bytes = pickle.dumps(self.q_model.q_1.state_dict())
+        q_serialized_string = base64.b64encode(q_state_dict_bytes)
+        with open(save_dir / 'Q_1_cp.txt', 'w') as f:
+            f.write(str(q_serialized_string))
         self.q_model.to(device=self.device)

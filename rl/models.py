@@ -165,24 +165,23 @@ class QModel(nn.Module):
             self.prepare_for_fc = nn.AdaptiveAvgPool2d((1, 1))
         else:
             self.prepare_for_fc = nn.Identity()
-            if fc_in_channels is None:
-                raise ValueError('If use_adaptive_avg_pool is False, fc_in_channels must be provided')
+        fc_out_channels = fc_in_channels // 2
         if self.dueling_q:
             self.value = nn.Sequential(
-                nn.Linear(fc_in_channels, fc_in_channels),
+                nn.Linear(fc_in_channels, fc_out_channels),
                 nn.ReLU(),
-                nn.Linear(fc_in_channels, 1)
+                nn.Linear(fc_out_channels, 1)
             )
             self.advantage = nn.Sequential(
-                nn.Linear(fc_in_channels, fc_in_channels),
+                nn.Linear(fc_in_channels, fc_out_channels),
                 nn.ReLU(),
-                nn.Linear(fc_in_channels, 4)
+                nn.Linear(fc_out_channels, 4)
             )
         else:
             self.q = nn.Sequential(
-                nn.Linear(fc_in_channels, fc_in_channels),
+                nn.Linear(fc_in_channels, fc_out_channels),
                 nn.ReLU(),
-                nn.Linear(fc_in_channels, 4)
+                nn.Linear(fc_out_channels, 4)
             )
         self.value_activation = nn.Identity() if value_activation is None else value_activation
         self.value_scale = value_scale
@@ -193,13 +192,20 @@ class QModel(nn.Module):
         base_out = base_out.view(base_out.shape[0], -1)
         if self.dueling_q:
             values = self.value(base_out)
-            values = self.value_activation(values) * self.value_scale + self.value_shift
             advantages = self.advantage(base_out)
             q_values = values + (advantages - advantages.mean(dim=-1, keepdims=True))
         else:
             q_values = self.q(base_out)
-            q_values = self.value_activation(q_values) * self.value_scale + self.value_shift
+        q_values = self.value_activation(q_values) * self.value_scale + self.value_shift
         return q_values
+
+    def get_state_value(self, states: torch.Tensor) -> torch.Tensor:
+        if self.dueling_q:
+            base_out = self.prepare_for_fc(self.base(states))
+            base_out = base_out.view(base_out.shape[0], -1)
+            return self.value(base_out)
+        else:
+            return self.forward(states).max(dim=-1, keepdim=True)[0]
 
 
 class DeepQNetwork(nn.Module):
@@ -240,39 +246,63 @@ class DeepQNetwork(nn.Module):
 
     def sample_action(self,
                       states: torch.Tensor,
-                      epsilon: Optional[float] = None,
-                      available_actions_mask: Optional[torch.Tensor] = None):
+                      epsilon: Optional[Union[float, torch.Tensor]] = None,
+                      available_actions_mask: Optional[torch.Tensor] = None,
+                      get_preds: bool = False) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         epsilon = self.epsilon if epsilon is None else epsilon
         if epsilon is None:
             raise RuntimeError('epsilon and self.epsilon are both None')
-        assert 0. <= epsilon <= 1.
 
         with torch.no_grad():
             q_vals = self.forward(states)
         if available_actions_mask is not None:
             q_vals.masked_fill_(~available_actions_mask, float('-inf'))
+        # In case all actions are masked, select one at random
+        probs = F.softmax(torch.where(
+            q_vals.isneginf().all(axis=-1, keepdim=True),
+            torch.zeros_like(q_vals),
+            q_vals * 10
+        ), dim=-1)
+        m = distributions.Categorical(probs)
+        sampled_actions = m.sample()
+        actions = torch.where(
+            torch.rand(size=(q_vals.shape[0], 1), device=states.device) < epsilon,
+            sampled_actions.unsqueeze(-1),
+            q_vals.argmax(dim=-1, keepdim=True)
+        )
+        """
+        # Old method
+        if available_actions_mask is not None:
+            q_vals.masked_fill_(~available_actions_mask, float('-inf'))
             actions_with_exploration = torch.where(
-                torch.rand(q_vals.shape[0], device=states.device) < epsilon,
-                torch.randint(q_vals.shape[-1], size=(q_vals.shape[0],), device=states.device),
-                q_vals.argmax(dim=-1)
-            ).unsqueeze(-1)
+                torch.rand(size=(q_vals.shape[0], 1), device=states.device) < epsilon,
+                torch.randint(q_vals.shape[-1], size=(q_vals.shape[0], 1), device=states.device),
+                q_vals.argmax(dim=-1, keepdim=True)
+            )
             actions_with_exploration = torch.where(
                 available_actions_mask.gather(1, actions_with_exploration),
                 actions_with_exploration,
                 (actions_with_exploration + torch.randint_like(actions_with_exploration, low=1, high=4)) % 4
             )
-            return actions_with_exploration.squeeze(-1)
+            assert available_actions_mask.gather(1, actions_with_exploration).all()
+            actions = actions_with_exploration.squeeze(-1)
         else:
-            return torch.where(
+            actions = torch.where(
                 torch.rand(q_vals.shape[0], device=states.device) < epsilon,
                 torch.randint(q_vals.shape[-1], size=(q_vals.shape[0],), device=states.device),
                 q_vals.argmax(dim=-1)
-            )
+            )"""
+
+        if get_preds:
+            return actions, q_vals
+        else:
+            return actions
 
     def choose_best_action(self,
                            states: torch.Tensor,
-                           available_actions_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
-        return self.sample_action(states, 0., available_actions_mask)
+                           available_actions_mask: Optional[torch.Tensor] = None,
+                           get_preds: bool = False) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        return self.sample_action(states, 0., available_actions_mask, get_preds)
 
     def train_on_batch(self,
                        s_batch: torch.Tensor,
@@ -299,7 +329,7 @@ class DeepQNetwork(nn.Module):
         next_q_values = next_step_q_model(next_s_batch)
         if self.double_q:
             next_q_values_2 = next_step_q_model_2(next_s_batch)
-            next_q_values = torch.min(
+            next_q_values = torch.minimum(
                 next_q_values.max(dim=-1, keepdims=True)[0],
                 next_q_values_2.max(dim=-1, keepdims=True)[0]
             )

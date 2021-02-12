@@ -13,18 +13,35 @@ with contextlib.redirect_stdout(io.StringIO()):
     from kaggle_environments.envs.hungry_geese.hungry_geese import Action, row_col
 
 
+class ActionMasking(Enum):
+    """
+    Available action masking settings returned by info_dict['available_actions_mask'].
+    NONE: No action masking
+    OPPOSITE: Only mask actions that are the opposite of the last action taken
+    FULL: Mask opposite actions and any action that would result in moving into a square with a goose body
+        (still allows movement into squares with goose heads for geese of length 1 or tails for any goose)
+        Warning: FULL action masking will sometimes result in no available actions - take this into account
+    """
+    NONE = auto()
+    OPPOSITE = auto()
+    FULL = auto()
+
+
 class ObsType(Enum):
     """
     An enum of all available obs_types
     WARNING: enum order is subject to change
     """
-    HEAD_CENTERED_OBS = auto()
+    HEAD_CENTERED_OBS_LARGE = auto()
+    HEAD_CENTERED_OBS_SMALL = auto()
     HEAD_CENTERED_SET_OBS = auto()
     SET_OBS = auto()
 
     def get_obs_spec(self, n_players: int = 4) -> Tuple[int, ...]:
-        if self == ObsType.HEAD_CENTERED_OBS:
+        if self == ObsType.HEAD_CENTERED_OBS_LARGE:
             return -1, n_players, 11 * n_players + 3, N_ROWS, N_COLS
+        elif self == ObsType.HEAD_CENTERED_OBS_SMALL:
+            return 1, n_players, 3 + 3 * n_players, N_ROWS, N_COLS
         elif self == ObsType.HEAD_CENTERED_SET_OBS:
             return -1, n_players, 13, N_ROWS, N_COLS
         elif self == ObsType.SET_OBS:
@@ -35,6 +52,7 @@ class ObsType(Enum):
 
 class RewardType(Enum):
     EVERY_STEP_ZERO_SUM = auto()
+    EVERY_STEP_LENGTH = auto()
     RANK_ON_DEATH = auto()
 
     def get_cumulative_reward_spec(self) -> Tuple[Optional[float], Optional[float]]:
@@ -42,6 +60,8 @@ class RewardType(Enum):
         The minimum/maximum cumulative available reward
         """
         if self == RewardType.EVERY_STEP_ZERO_SUM:
+            return 0., 1.
+        elif self == RewardType.EVERY_STEP_LENGTH:
             return 0., 1.
         elif self == RewardType.RANK_ON_DEATH:
             return -1., 1.
@@ -53,7 +73,11 @@ class RewardType(Enum):
         The recommended value activation function, value_scale, and value_shift for the Q/value model
         """
         if self == RewardType.EVERY_STEP_ZERO_SUM:
-            value_activation = nn.ReLU()
+            value_activation = nn.Sigmoid()
+            value_scale = 1.
+            value_shift = 0.
+        elif self == RewardType.EVERY_STEP_LENGTH:
+            value_activation = nn.Sigmoid()
             value_scale = 1.
             value_shift = 0.
         elif self == RewardType.RANK_ON_DEATH:
@@ -96,14 +120,16 @@ def _get_direction(from_position: int, to_position: int) -> str:
 
 
 def _row_col(position: int) -> Tuple[int, int]:
-    return row_col(position, 11)
+    return row_col(position, N_COLS)
 
 
 class GooseEnvVectorized:
     def __init__(self, obs_type: Union[ObsType, Sequence[ObsType]], reward_type: RewardType,
+                 action_masking: ActionMasking = ActionMasking.OPPOSITE,
                  n_envs: int = 1, n_players: int = 4, silent_reset: bool = True):
         self.obs_type = obs_type
         self.reward_type = reward_type
+        self.action_masking = action_masking
         self.n_envs = n_envs
         self.n_players = n_players
         self.silent_reset = silent_reset
@@ -179,11 +205,26 @@ class GooseEnvVectorized:
 
         rewards = np.zeros((self.n_envs, self.n_players))
         if self.reward_type == RewardType.EVERY_STEP_ZERO_SUM:
+            # A small reward is given to a goose when it eats
+            new_kaggle_rewards = np.array([[agent['reward'] for agent in env.steps[-1]] for env in self.wrapped_envs])
+            goose_ate = np.logical_or(
+                new_kaggle_rewards > (self.kaggle_rewards + GOOSE_MAX_LEN + 1.),
+                np.logical_and(
+                    new_kaggle_rewards == (self.kaggle_rewards + GOOSE_MAX_LEN + 1.),
+                    (self.kaggle_timesteps[:, np.newaxis] + 1) % HUNGER_RATE == 0
+                )
+            )
+            # Rewards start at 0, not 101, so this np.where catches that case
+            goose_ate = np.where(
+                self.kaggle_timesteps[:, np.newaxis] == 0,
+                new_kaggle_rewards > 2 * (GOOSE_MAX_LEN + 1.) + 1.,
+                goose_ate
+            )
             # For the episodes that aren't finished, a reward of 1 is divided among the remaining players
             epsilon = 1e-10
             rewards = np.where(
                 ~self.agent_dones,
-                1. / ((~self.agent_dones).sum(axis=1, keepdims=True) + epsilon),
+                goose_ate / (N_ROWS * N_COLS) + (1. / ((~self.agent_dones).sum(axis=1, keepdims=True) + epsilon)),
                 0.
             )
             n_steps_remaining = [MAX_NUM_STEPS - env.steps[-1][0]['observation']['step'] for env in self.wrapped_envs]
@@ -191,6 +232,34 @@ class GooseEnvVectorized:
             assert np.all(n_steps_remaining > 0)
             # Awards 1st place all remaining points
             # There is a tactical edge case where 2nd should get more reward than 3rd, but does not
+            n_first_places = (current_standings == current_standings.max(axis=1, keepdims=True)).sum(axis=1,
+                                                                                                     keepdims=True)
+            rewards = np.where(
+                self.agent_dones.all(axis=1, keepdims=True),
+                np.where(
+                    current_standings == current_standings.max(axis=1, keepdims=True),
+                    n_steps_remaining / n_first_places,
+                    0.
+                ),
+                rewards
+            )
+            rewards = rewards / MAX_NUM_STEPS
+        elif self.reward_type == RewardType.EVERY_STEP_LENGTH:
+            goose_lengths = np.array([[len(goose) for goose in env.steps[-1][0]['observation']['geese']]
+                                      for env in self.wrapped_envs])
+            epsilon = 1e-10
+            goose_lengths_relative = goose_lengths / (goose_lengths.sum(axis=1, keepdims=True) + epsilon)
+            # For the episodes that aren't finished, a reward of 1 is divided among the remaining players, based on size
+            rewards = np.where(
+                ~self.agent_dones,
+                goose_lengths_relative,
+                0.
+            )
+            # Awards 1st place all remaining points
+            # There is a tactical edge case where 2nd should get more reward than 3rd, but does not
+            n_steps_remaining = [MAX_NUM_STEPS - env.steps[-1][0]['observation']['step'] for env in self.wrapped_envs]
+            n_steps_remaining = np.array(n_steps_remaining, dtype=np.float32)[:, np.newaxis]
+            assert np.all(n_steps_remaining > 0)
             n_first_places = (current_standings == current_standings.max(axis=1, keepdims=True)).sum(axis=1,
                                                                                                      keepdims=True)
             rewards = np.where(
@@ -230,20 +299,51 @@ class GooseEnvVectorized:
             return self._get_obs(self.obs_type)
 
     def _get_obs(self, obs_type: ObsType) -> np.ndarray:
-        if obs_type == ObsType.HEAD_CENTERED_OBS:
-            obs = self._get_head_centered_obs()
-        elif obs_type == ObsType.HEAD_CENTERED_SET_OBS:
-            obs = self._get_head_centered_set_obs()
-        elif obs_type == ObsType.SET_OBS:
-            obs = self._get_set_obs()
-        else:
-            raise ValueError(f'Unsupported obs_type: {obs_type}')
-        return obs
+        return np.concatenate([create_obs_tensor(env.steps[-1], obs_type) for env in self.wrapped_envs], axis=0)
 
-    def _get_head_centered_obs(self) -> np.ndarray:
+    def _update_other_info(self):
+        self.goose_head_locs = np.zeros((self.n_envs, self.n_players, 2), dtype=np.int64)
+        for env_idx, env in enumerate(self.wrapped_envs):
+            for agent_idx, goose_loc_list in enumerate(env.steps[-1][0]['observation']['geese']):
+                if len(goose_loc_list) > 0:
+                    self.goose_head_locs[env_idx, agent_idx] = _row_col(goose_loc_list[0])
+        self.available_actions_mask = np.ones((self.n_envs, self.n_players, 4), dtype=np.bool)
+        if self.action_masking == ActionMasking.NONE:
+            pass
+        elif self.action_masking == ActionMasking.OPPOSITE:
+            for env_idx, env in enumerate(self.wrapped_envs):
+                if env.steps[-1][0]['observation']['step'] > 0:
+                    for agent_idx, agent in enumerate(env.steps[-1]):
+                        last_action = Action[agent['action']]
+                        banned_action = list(Action).index(last_action.opposite())
+                        self.available_actions_mask[env_idx, agent_idx, banned_action] = False
+        elif self.action_masking == ActionMasking.FULL:
+            assert False, 'Not yet implemented'
+        else:
+            raise ValueError(f'Unrecognized action_masking: {self.action_masking}')
+        self.kaggle_rewards = np.array([[agent['reward'] for agent in env.steps[-1]] for env in self.wrapped_envs])
+        self.kaggle_timesteps = np.array([env.steps[-1][0]['observation']['step'] for env in self.wrapped_envs])
+
+    @property
+    def info_dict(self) -> Dict:
+        return {
+            'head_positions': self.goose_head_locs,
+            'available_actions_mask': self.available_actions_mask,
+            'episodes_finished_last_turn': self.episodes_finished_last_turn,
+            'episodes_finished_last_turn_info': self.episodes_finished_last_turn_info,
+        }
+
+    @property
+    def episodes_done(self):
+        return self.agent_dones.all(axis=1)
+
+
+def create_obs_tensor(observation, obs_type):
+    n_players = len(observation[0]['observation']['geese'])
+    if obs_type == ObsType.HEAD_CENTERED_OBS_LARGE:
         """
-        Returns a tensor of shape (n_envs, n_players, 3 + 11*n_players, 7, 11)
-        Axes represent (n_envs, n_players, n_channels, n_rows, n_cols)
+        Returns a tensor of shape (1, n_players, 3 + 11*n_players, 7, 11)
+        Axes represent (1, n_players, n_channels, n_rows, n_cols)
         The channels contain the following information about each cell of the board:
         for i in range (n_players): (myself always first)
             * contains_head[i]
@@ -287,105 +387,171 @@ class GooseEnvVectorized:
             Action.SOUTH.name: 'connected_s',
             Action.WEST.name: 'connected_w'
         }
-
-        player_channels = np.zeros((self.n_envs,
-                                    self.n_players,
-                                    len(player_channel_list) * self.n_players,
+        player_channels = np.zeros((n_players,
+                                    len(player_channel_list) * n_players,
                                     N_ROWS,
                                     N_COLS),
                                    dtype=np.float32)
-        contains_food = np.zeros((self.n_envs, self.n_players, 1, N_ROWS, N_COLS), dtype=np.float32)
+        contains_food = np.zeros((n_players, 1, N_ROWS, N_COLS), dtype=np.float32)
         steps_since_starvation = np.zeros_like(contains_food)
         current_step = np.zeros_like(contains_food)
 
-        for env_idx, env in enumerate(self.wrapped_envs):
-            observation = env.steps[-1]
-            for food_loc_n in observation[0]['observation']['food']:
-                food_loc = _row_col(food_loc_n)
-                contains_food[env_idx, :, :, food_loc[0], food_loc[1]] = 1.
-            steps_since_starvation[env_idx] = observation[0]['observation']['step'] % HUNGER_RATE
-            current_step[env_idx] = observation[0]['observation']['step']
-            for main_agent_idx in range(self.n_players):
-                for agent_idx in range(self.n_players):
-                    if agent_idx == main_agent_idx:
-                        channel_idx_base = 0
-                    elif agent_idx < main_agent_idx:
-                        channel_idx_base = (agent_idx + 1) * len(player_channel_list)
-                    else:
-                        channel_idx_base = agent_idx * len(player_channel_list)
-                    goose_loc_list = observation[0]['observation']['geese'][agent_idx]
-                    # Make sure the goose is still alive
-                    if len(goose_loc_list) > 0:
-                        head_loc = _row_col(goose_loc_list[0])
-                        player_channels[env_idx,
-                                        main_agent_idx,
-                                        channel_idx_base + idx_dict['contains_head'],
-                                        (*head_loc)] = 1.
-                        goose_len = float(len(goose_loc_list))
-                        player_channels[env_idx,
-                                        main_agent_idx,
-                                        channel_idx_base + idx_dict['goose_length']] = goose_len / (N_ROWS * N_COLS)
-                        if observation[0]['observation']['step'] > 0:
-                            last_action_channel = last_action_dict[observation[agent_idx]['action']]
-                            player_channels[env_idx,
-                                            main_agent_idx,
-                                            channel_idx_base + idx_dict[last_action_channel]] = 1.
-                    # Make sure the goose is more than just a head
-                    if len(goose_loc_list) > 1:
-                        for body_loc_n in goose_loc_list[1:]:
-                            body_loc = _row_col(body_loc_n)
-                            player_channels[env_idx,
-                                            main_agent_idx,
-                                            channel_idx_base + idx_dict['contains_body'],
-                                            (*body_loc)] = 1.
-                        for i in range(len(goose_loc_list) - 1):
-                            connection_channel = connected_dict[_get_direction(
-                                goose_loc_list[i],
-                                goose_loc_list[i + 1]
-                            )]
-                            body_loc = _row_col(goose_loc_list[i])
-                            player_channels[env_idx,
-                                            main_agent_idx,
-                                            channel_idx_base + idx_dict[connection_channel],
-                                            (*body_loc)] = 1.
-                            next_connection_channel = connected_dict[_get_direction(
-                                goose_loc_list[i + 1],
-                                goose_loc_list[i]
-                            )]
-                            next_body_loc = _row_col(goose_loc_list[i + 1])
-                            player_channels[env_idx,
-                                            main_agent_idx,
-                                            channel_idx_base + idx_dict[next_connection_channel],
-                                            (*next_body_loc)] = 1.
+        for food_loc_n in observation[0]['observation']['food']:
+            food_loc = _row_col(food_loc_n)
+            contains_food[:, :, food_loc[0], food_loc[1]] = 1.
+        steps_since_starvation[:] = observation[0]['observation']['step'] % HUNGER_RATE
+        current_step[:] = observation[0]['observation']['step']
+        for main_agent_idx in range(n_players):
+            for agent_idx in range(n_players):
+                if agent_idx == main_agent_idx:
+                    channel_idx_base = 0
+                elif agent_idx < main_agent_idx:
+                    channel_idx_base = (agent_idx + 1) * len(player_channel_list)
+                else:
+                    channel_idx_base = agent_idx * len(player_channel_list)
+                goose_loc_list = observation[0]['observation']['geese'][agent_idx]
+                # Make sure the goose is still alive
+                if len(goose_loc_list) > 0:
+                    head_loc = _row_col(goose_loc_list[0])
+                    player_channels[main_agent_idx,
+                                    channel_idx_base + idx_dict['contains_head'],
+                                    (*head_loc)] = 1.
+                    goose_len = float(len(goose_loc_list))
+                    player_channels[main_agent_idx,
+                                    channel_idx_base + idx_dict['goose_length']] = goose_len / (N_ROWS * N_COLS)
+                    if observation[0]['observation']['step'] > 0:
+                        last_action_channel = last_action_dict[observation[agent_idx]['action']]
+                        player_channels[main_agent_idx,
+                                        channel_idx_base + idx_dict[last_action_channel]] = 1.
+                # Make sure the goose is more than just a head
+                if len(goose_loc_list) > 1:
+                    for body_loc_n in goose_loc_list[1:]:
+                        body_loc = _row_col(body_loc_n)
+                        player_channels[main_agent_idx,
+                                        channel_idx_base + idx_dict['contains_body'],
+                                        (*body_loc)] = 1.
+                    for i in range(len(goose_loc_list) - 1):
+                        connection_channel = connected_dict[_get_direction(
+                            goose_loc_list[i],
+                            goose_loc_list[i + 1]
+                        )]
+                        body_loc = _row_col(goose_loc_list[i])
+                        player_channels[main_agent_idx,
+                                        channel_idx_base + idx_dict[connection_channel],
+                                        (*body_loc)] = 1.
+                        next_connection_channel = connected_dict[_get_direction(
+                            goose_loc_list[i + 1],
+                            goose_loc_list[i]
+                        )]
+                        next_body_loc = _row_col(goose_loc_list[i + 1])
+                        player_channels[main_agent_idx,
+                                        channel_idx_base + idx_dict[next_connection_channel],
+                                        (*next_body_loc)] = 1.
         obs = np.concatenate([
             player_channels,
             contains_food,
             steps_since_starvation / HUNGER_RATE,
             current_step / MAX_NUM_STEPS
-        ], axis=2)
-        for env_idx in range(self.n_envs):
-            for centered_agent_idx in range(self.n_players):
-                if not self.agent_dones[env_idx, centered_agent_idx]:
-                    head_loc = self.goose_head_locs[env_idx, centered_agent_idx]
-                    translation = np.array([int((N_ROWS-1)/2), int((N_COLS-1)/2)]) - head_loc
-                    obs[env_idx, centered_agent_idx] = np.roll(
-                        obs[env_idx, centered_agent_idx], translation, axis=(-2, -1)
-                    )
-                    if obs[env_idx,
-                           centered_agent_idx,
-                           0,
-                           int((N_ROWS-1)/2),
-                           int((N_COLS-1)/2)] != 1.:
-                        print('Head not centered!')
-                        print(head_loc)
-                        print(obs[env_idx, centered_agent_idx, 0])
-                        assert False
-        return obs
-
-    def _get_head_centered_set_obs(self) -> np.ndarray:
+        ], axis=1)
+        for centered_agent_idx, goose_loc_list in enumerate(observation[0]['observation']['geese']):
+            if len(goose_loc_list) > 0:
+                head_loc = np.array(_row_col(goose_loc_list[0]))
+                translation = np.array([int((N_ROWS - 1) / 2), int((N_COLS - 1) / 2)]) - head_loc
+                obs[centered_agent_idx] = np.roll(
+                    obs[centered_agent_idx], translation, axis=(-2, -1)
+                )
+                if obs[centered_agent_idx,
+                       0,
+                       int((N_ROWS - 1) / 2),
+                       int((N_COLS - 1) / 2)] != 1.:
+                    print('Head not centered!')
+                    print(head_loc)
+                    print(obs[centered_agent_idx, 0])
+                    assert False
+    elif obs_type == ObsType.HEAD_CENTERED_OBS_SMALL:
         """
-        Returns a tensor of shape (n_envs, n_players, 13, 7, 11)
-        Axes represent (n_envs, n_players, n_channels, n_rows, n_cols)
+        Returns a tensor of shape (1, n_players, 3 + 3*n_players, 7, 11)
+        The channels contain the following information about each cell of the board:
+        for i in range (n_players): (myself always first)
+            * contains_head[i]
+            * contains_body[i]
+            * contains_tail[i]0
+        * contains_food
+        * steps_since_starvation (normalized to be in the range 0-1)
+        * current_step (normalized to be in the range 0-1)
+        """
+        player_channel_list = [
+            'contains_head',
+            'contains_body',
+            'contains_tail',
+        ]
+        idx_dict = {c: i for i, c in enumerate(player_channel_list)}
+        player_channels = np.zeros((n_players,
+                                    len(player_channel_list) * n_players,
+                                    N_ROWS,
+                                    N_COLS),
+                                   dtype=np.float32)
+        contains_food = np.zeros((n_players, 1, N_ROWS, N_COLS), dtype=np.float32)
+        steps_since_starvation = np.zeros_like(contains_food)
+        current_step = np.zeros_like(contains_food)
+        for food_loc_n in observation[0]['observation']['food']:
+            food_loc = _row_col(food_loc_n)
+            contains_food[:, :, food_loc[0], food_loc[1]] = 1.
+        steps_since_starvation[:] = observation[0]['observation']['step'] % HUNGER_RATE
+        current_step[:] = observation[0]['observation']['step']
+        for main_agent_idx in range(n_players):
+            for agent_idx in range(n_players):
+                if agent_idx == main_agent_idx:
+                    channel_idx_base = 0
+                elif agent_idx < main_agent_idx:
+                    channel_idx_base = (agent_idx + 1) * len(player_channel_list)
+                else:
+                    channel_idx_base = agent_idx * len(player_channel_list)
+                goose_loc_list = observation[0]['observation']['geese'][agent_idx]
+                # Make sure the goose is still alive
+                if len(goose_loc_list) > 0:
+                    head_loc = _row_col(goose_loc_list[0])
+                    player_channels[main_agent_idx,
+                                    channel_idx_base + idx_dict['contains_head'],
+                                    (*head_loc)] = 1.
+                # Check if the goose has a tail
+                if len(goose_loc_list) > 1:
+                    tail_loc = _row_col(goose_loc_list[-1])
+                    player_channels[main_agent_idx,
+                                    channel_idx_base + idx_dict['contains_tail'],
+                                    (*tail_loc)] = 1.
+                # Check if the goose is more than just a head and tail
+                if len(goose_loc_list) > 2:
+                    for body_loc_n in goose_loc_list[1:-1]:
+                        body_loc = _row_col(body_loc_n)
+                        player_channels[main_agent_idx,
+                                        channel_idx_base + idx_dict['contains_body'],
+                                        (*body_loc)] = 1.
+        obs = np.concatenate([
+            player_channels,
+            contains_food,
+            steps_since_starvation / HUNGER_RATE,
+            current_step / MAX_NUM_STEPS
+        ], axis=1)
+        for centered_agent_idx, goose_loc_list in enumerate(observation[0]['observation']['geese']):
+            if len(goose_loc_list) > 0:
+                head_loc = np.array(_row_col(goose_loc_list[0]))
+                translation = np.array([int((N_ROWS - 1) / 2), int((N_COLS - 1) / 2)]) - head_loc
+                obs[centered_agent_idx] = np.roll(
+                    obs[centered_agent_idx], translation, axis=(-2, -1)
+                )
+                if obs[centered_agent_idx,
+                       0,
+                       int((N_ROWS - 1) / 2),
+                       int((N_COLS - 1) / 2)] != 1.:
+                    print('Head not centered!')
+                    print(head_loc)
+                    print(obs[centered_agent_idx, 0])
+                    assert False
+    elif obs_type == ObsType.HEAD_CENTERED_SET_OBS:
+        """
+        Returns a tensor of shape (1, n_players, 13, 7, 11)
+        Axes represent (1, n_players, n_channels, n_rows, n_cols)
         The channels are (mostly) one-hot matrices and contain the following information about each cell of the board:
         The selected agent's values (except for food, steps_since_starvation, and current_step) are positive
         Opponent values are negative
@@ -403,7 +569,7 @@ class GooseEnvVectorized:
         * steps_since_starvation (normalized to be in the range 0-1)
         * current_step (normalized to be in the range 0-1)
         """
-        contains_head = np.zeros((self.n_envs, self.n_players, N_ROWS, N_COLS), dtype=np.float32)
+        contains_head = np.zeros((n_players, N_ROWS, N_COLS), dtype=np.float32)
         contains_food = np.zeros_like(contains_head)
         contains_body = np.zeros_like(contains_head)
         connected_n = np.zeros_like(contains_head)
@@ -429,46 +595,40 @@ class GooseEnvVectorized:
             Action.SOUTH.name: last_action_s,
             Action.WEST.name: last_action_w
         }
-        for env_idx, env in enumerate(self.wrapped_envs):
-            observation = env.steps[-1]
-            for food_loc_n in observation[0]['observation']['food']:
-                food_loc = _row_col(food_loc_n)
-                contains_food[env_idx, :, food_loc[0], food_loc[1]] = 1.
-            steps_since_starvation[env_idx] = observation[0]['observation']['step'] % HUNGER_RATE
-            current_step[env_idx] = observation[0]['observation']['step']
-            for centered_agent_idx in range(self.n_players):
-                for agent_idx in range(self.n_players):
-                    is_centered_multiplier = 1. if centered_agent_idx == agent_idx else -1.
-                    goose_loc_list = observation[0]['observation']['geese'][agent_idx]
-                    # Make sure the goose is still alive
-                    if len(goose_loc_list) > 0:
-                        head_loc = _row_col(goose_loc_list[0])
-                        contains_head[env_idx, centered_agent_idx, (*head_loc)] = 1. * is_centered_multiplier
-                        if observation[0]['observation']['step'] > 0:
-                            last_action_channel = last_action_dict[observation[agent_idx]['action']]
-                            last_action_channel[env_idx, centered_agent_idx, (*head_loc)] = 1. * is_centered_multiplier
-                    # Make sure the goose is more than just a head
-                    if len(goose_loc_list) > 1:
-                        for body_loc_n in goose_loc_list[1:]:
-                            body_loc = _row_col(body_loc_n)
-                            contains_body[env_idx, centered_agent_idx, (*body_loc)] = 1. * is_centered_multiplier
-                        for i in range(len(goose_loc_list) - 1):
-                            connection_channel = connected_dict[_get_direction(
-                                goose_loc_list[i],
-                                goose_loc_list[i + 1]
-                            )]
-                            body_loc = _row_col(goose_loc_list[i])
-                            connection_channel[env_idx, centered_agent_idx, (*body_loc)] = 1. * is_centered_multiplier
-                            next_connection_channel = connected_dict[_get_direction(
-                                goose_loc_list[i + 1],
-                                goose_loc_list[i]
-                            )]
-                            next_body_loc = _row_col(goose_loc_list[i + 1])
-                            next_connection_channel[
-                                env_idx,
-                                centered_agent_idx,
-                                (*next_body_loc)
-                            ] = 1. * is_centered_multiplier
+        for food_loc_n in observation[0]['observation']['food']:
+            food_loc = _row_col(food_loc_n)
+            contains_food[:, food_loc[0], food_loc[1]] = 1.
+        steps_since_starvation[:] = observation[0]['observation']['step'] % HUNGER_RATE
+        current_step[:] = observation[0]['observation']['step']
+        for centered_agent_idx in range(n_players):
+            for agent_idx in range(n_players):
+                is_centered_multiplier = 1. if centered_agent_idx == agent_idx else -1.
+                goose_loc_list = observation[0]['observation']['geese'][agent_idx]
+                # Make sure the goose is still alive
+                if len(goose_loc_list) > 0:
+                    head_loc = _row_col(goose_loc_list[0])
+                    contains_head[centered_agent_idx, (*head_loc)] = 1. * is_centered_multiplier
+                    if observation[0]['observation']['step'] > 0:
+                        last_action_channel = last_action_dict[observation[agent_idx]['action']]
+                        last_action_channel[centered_agent_idx, (*head_loc)] = 1. * is_centered_multiplier
+                # Make sure the goose is more than just a head
+                if len(goose_loc_list) > 1:
+                    for body_loc_n in goose_loc_list[1:]:
+                        body_loc = _row_col(body_loc_n)
+                        contains_body[centered_agent_idx, (*body_loc)] = 1. * is_centered_multiplier
+                    for i in range(len(goose_loc_list) - 1):
+                        connection_channel = connected_dict[_get_direction(
+                            goose_loc_list[i],
+                            goose_loc_list[i + 1]
+                        )]
+                        body_loc = _row_col(goose_loc_list[i])
+                        connection_channel[centered_agent_idx, (*body_loc)] = 1. * is_centered_multiplier
+                        next_connection_channel = connected_dict[_get_direction(
+                            goose_loc_list[i + 1],
+                            goose_loc_list[i]
+                        )]
+                        next_body_loc = _row_col(goose_loc_list[i + 1])
+                        next_connection_channel[centered_agent_idx, (*next_body_loc)] = 1. * is_centered_multiplier
         obs = np.stack([
             contains_head,
             contains_food,
@@ -483,26 +643,23 @@ class GooseEnvVectorized:
             last_action_w,
             steps_since_starvation / HUNGER_RATE,
             current_step / MAX_NUM_STEPS
-        ], axis=2)
-        for env_idx in range(self.n_envs):
-            for centered_agent_idx in range(self.n_players):
-                if not self.agent_dones[env_idx, centered_agent_idx]:
-                    head_loc = self.goose_head_locs[env_idx, centered_agent_idx]
-                    translation = np.array([3, 5]) - head_loc
-                    obs[env_idx, centered_agent_idx] = np.roll(
-                        obs[env_idx, centered_agent_idx], translation, axis=(-2, -1)
-                    )
-                    if obs[env_idx, centered_agent_idx, 0, 3, 5] != 1.:
-                        print('Head not centered!')
-                        print(head_loc)
-                        print(obs[env_idx, centered_agent_idx, 1])
-                        assert False
-        return obs
-
-    def _get_set_obs(self) -> np.ndarray:
+        ], axis=1)
+        for centered_agent_idx, goose_loc_list in enumerate(observation[0]['observation']['geese']):
+            if len(goose_loc_list) > 0:
+                head_loc = np.array(_row_col(goose_loc_list[0]))
+                translation = np.array([3, 5]) - head_loc
+                obs[centered_agent_idx] = np.roll(
+                    obs[centered_agent_idx], translation, axis=(-2, -1)
+                )
+                if obs[centered_agent_idx, 0, 3, 5] != 1.:
+                    print('Head not centered!')
+                    print(head_loc)
+                    print(obs[centered_agent_idx, 1])
+                    assert False
+    elif obs_type == ObsType.SET_OBS:
         """
-        Returns a tensor of shape (n_envs, 13, 7, 11)
-        Axes represent (n_envs, n_channels, n_rows, n_cols)
+        Returns a tensor of shape (1, 13, 7, 11)
+        Axes represent (1, n_channels, n_rows, n_cols)
         The channels are (mostly) one-hot matrices and contain the following information about each cell of the board:
         * contains_head
         * contains_food
@@ -518,7 +675,7 @@ class GooseEnvVectorized:
         * steps_since_starvation (normalized to be in the range 0-1)
         * current_step (normalized to be in the range 0-1)
         """
-        contains_head = np.zeros((self.n_envs, N_ROWS, N_COLS), dtype=np.float32)
+        contains_head = np.zeros((N_ROWS, N_COLS), dtype=np.float32)
         contains_food = np.zeros_like(contains_head)
         contains_body = np.zeros_like(contains_head)
         connected_n = np.zeros_like(contains_head)
@@ -544,41 +701,39 @@ class GooseEnvVectorized:
             Action.SOUTH.name: last_action_s,
             Action.WEST.name: last_action_w
         }
-        for env_idx, env in enumerate(self.wrapped_envs):
-            observation = env.steps[-1]
-            for food_loc_n in observation[0]['observation']['food']:
-                food_loc = _row_col(food_loc_n)
-                contains_food[env_idx, (*food_loc)] = 1.
-            for agent_idx in range(self.n_players):
-                goose_loc_list = observation[0]['observation']['geese'][agent_idx]
-                # Make sure the goose is still alive
-                if len(goose_loc_list) > 0:
-                    head_loc = _row_col(goose_loc_list[0])
-                    contains_head[env_idx, (*head_loc)] = 1.
-                    if observation[0]['observation']['step'] > 0:
-                        last_action_channel = last_action_dict[observation[agent_idx]['action']]
-                        last_action_channel[env_idx, (*head_loc)] = 1.
-                # Make sure the goose is more than just a head
-                if len(goose_loc_list) > 1:
-                    for body_loc_n in goose_loc_list[1:]:
-                        body_loc = _row_col(body_loc_n)
-                        contains_body[env_idx, (*body_loc)] = 1.
-                    for i in range(len(goose_loc_list) - 1):
-                        connection_channel = connected_dict[_get_direction(
-                            goose_loc_list[i],
-                            goose_loc_list[i+1]
-                        )]
-                        body_loc = _row_col(goose_loc_list[i])
-                        connection_channel[env_idx, (*body_loc)] = 1.
-                        next_connection_channel = connected_dict[_get_direction(
-                            goose_loc_list[i+1],
-                            goose_loc_list[i]
-                        )]
-                        next_body_loc = _row_col(goose_loc_list[i+1])
-                        next_connection_channel[env_idx, (*next_body_loc)] = 1.
-            steps_since_starvation[env_idx] = observation[0]['observation']['step'] % HUNGER_RATE
-            current_step[env_idx] = observation[0]['observation']['step']
-        return np.stack([
+        for food_loc_n in observation[0]['observation']['food']:
+            food_loc = _row_col(food_loc_n)
+            contains_food[food_loc[0], food_loc[1]] = 1.
+        for agent_idx in range(n_players):
+            goose_loc_list = observation[0]['observation']['geese'][agent_idx]
+            # Make sure the goose is still alive
+            if len(goose_loc_list) > 0:
+                head_loc = _row_col(goose_loc_list[0])
+                contains_head[head_loc[0], head_loc[1]] = 1.
+                if observation[0]['observation']['step'] > 0:
+                    last_action_channel = last_action_dict[observation[agent_idx]['action']]
+                    last_action_channel[head_loc[0], head_loc[1]] = 1.
+            # Make sure the goose is more than just a head
+            if len(goose_loc_list) > 1:
+                for body_loc_n in goose_loc_list[1:]:
+                    body_loc = _row_col(body_loc_n)
+                    contains_body[body_loc[0], body_loc[1]] = 1.
+                for i in range(len(goose_loc_list) - 1):
+                    connection_channel = connected_dict[_get_direction(
+                        goose_loc_list[i],
+                        goose_loc_list[i + 1]
+                    )]
+                    body_loc = _row_col(goose_loc_list[i])
+                    connection_channel[body_loc[0], body_loc[1]] = 1.
+                    next_connection_channel = connected_dict[_get_direction(
+                        goose_loc_list[i + 1],
+                        goose_loc_list[i]
+                    )]
+                    next_body_loc = _row_col(goose_loc_list[i + 1])
+                    next_connection_channel[next_body_loc[0], next_body_loc[1]] = 1.
+        steps_since_starvation[:] = observation[0]['observation']['step'] % HUNGER_RATE
+        current_step[:] = observation[0]['observation']['step']
+        obs = np.stack([
             contains_head,
             contains_food,
             contains_body,
@@ -592,31 +747,7 @@ class GooseEnvVectorized:
             last_action_w,
             steps_since_starvation / HUNGER_RATE,
             current_step / MAX_NUM_STEPS
-        ], axis=1)
-
-    def _update_other_info(self):
-        self.goose_head_locs = np.zeros((self.n_envs, self.n_players, 2), dtype=np.int64)
-        for env_idx, env in enumerate(self.wrapped_envs):
-            for agent_idx, goose_loc_list in enumerate(env.steps[-1][0]['observation']['geese']):
-                if len(goose_loc_list) > 0:
-                    self.goose_head_locs[env_idx, agent_idx] = _row_col(goose_loc_list[0])
-        self.available_actions_mask = np.ones((self.n_envs, self.n_players, 4), dtype=np.bool)
-        for env_idx, env in enumerate(self.wrapped_envs):
-            if env.steps[-1][0]['observation']['step'] > 0:
-                for agent_idx, agent in enumerate(env.steps[-1]):
-                    last_action = Action[agent['action']]
-                    banned_action = list(Action).index(last_action.opposite())
-                    self.available_actions_mask[env_idx, agent_idx, banned_action] = False
-
-    @property
-    def info_dict(self) -> Dict:
-        return {
-            'head_positions': self.goose_head_locs,
-            'available_actions_mask': self.available_actions_mask,
-            'episodes_finished_last_turn': self.episodes_finished_last_turn,
-            'episodes_finished_last_turn_info': self.episodes_finished_last_turn_info,
-        }
-
-    @property
-    def episodes_done(self):
-        return self.agent_dones.all(axis=1)
+        ], axis=0)
+    else:
+        raise ValueError(f'Unsupported obs_type: {obs_type}')
+    return np.expand_dims(obs, 0)
