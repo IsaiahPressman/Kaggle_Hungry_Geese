@@ -64,7 +64,8 @@ if __name__ == '__main__':
     if len(args.agent_paths) == 1:
         agent_paths = args.agent_paths * 4
     elif len(args.agent_paths) == 2:
-        agent_paths = args.agent_paths * 2
+        agent_paths = [args.agent_paths[0], args.agent_paths[0],
+                       args.agent_paths[1], args.agent_paths[1]]
     elif len(args.agent_paths) == 4:
         agent_paths = args.agent_paths
     else:

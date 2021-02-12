@@ -15,7 +15,7 @@ from rl.utils import format_experiment_name
 if __name__ == '__main__':
     DEVICE = torch.device('cuda')
 
-    obs_type = ge.ObsType.HEAD_CENTERED_OBS
+    obs_type = ge.ObsType.HEAD_CENTERED_OBS_LARGE
     reward_type = ge.RewardType.RANK_ON_DEATH
     """
     initial_out_channels = 64
