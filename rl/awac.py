@@ -14,16 +14,18 @@ from typing import *
 
 # Custom imports
 from . import goose_env as ge
+from .models import BasicActorCriticNetwork
 from .replay_buffers import BasicReplayBuffer
 
 
 class AWAC:
     def __init__(
             self,
-            model: torch.nn.Module,
+            model: BasicActorCriticNetwork,
             optimizer: torch.optim,
             env,
             replay_buffer: BasicReplayBuffer,
+            use_action_masking: bool = True,
             validation_kwargs_dicts: Sequence[Dict] = (),
             deterministic_validation_policy: bool = True,
             device: torch.device = torch.device('cuda'),
@@ -37,6 +39,7 @@ class AWAC:
         self.model.train()
         self.optimizer = optimizer
         self.replay_buffer = replay_buffer
+        self.use_action_masking = use_action_masking
         self.validation_kwargs_dicts = validation_kwargs_dicts
         self.deterministic_validation_policy = deterministic_validation_policy
         self.device = device
@@ -199,6 +202,8 @@ class AWAC:
         all_n_steps = np.array([fei['n_steps'] for fei in finished_episode_infos])
         all_goose_death_times = np.array([fei['goose_death_times'] for fei in finished_episode_infos]).ravel()
         all_goose_lengths = np.array([fei['goose_lengths'] for fei in finished_episode_infos]).ravel()
+        _all_goose_rankings = np.array([fei['goose_rankings'] for fei in finished_episode_infos]).ravel()
+        all_winning_goose_lengths = all_goose_lengths[_all_goose_rankings == self.env.n_players]
         self.summary_writer.add_scalar(f'Epoch/mean_n_steps',
                                        all_n_steps.mean(),
                                        self.epoch_counter)
@@ -207,6 +212,9 @@ class AWAC:
                                        self.epoch_counter)
         self.summary_writer.add_scalar('Epoch/mean_goose_lengths',
                                        all_goose_lengths.mean(),
+                                       self.epoch_counter)
+        self.summary_writer.add_scalar('Epoch/mean_winning_goose_lengths',
+                                       all_winning_goose_lengths.mean(),
                                        self.epoch_counter)
 
         self.summary_writer.add_histogram(f'Epoch/n_steps',
@@ -218,6 +226,12 @@ class AWAC:
         self.summary_writer.add_histogram('Epoch/goose_lengths',
                                           all_goose_lengths,
                                           self.epoch_counter)
+        self.summary_writer.add_histogram('Epoch/winning_goose_lengths',
+                                          all_winning_goose_lengths,
+                                          self.epoch_counter)
+
+    def checkpoint(self):
+        checkpoint_start_time = time.time()
         for name, param in self.model.named_parameters():
             if param.requires_grad:
                 self.summary_writer.add_histogram(
@@ -225,13 +239,14 @@ class AWAC:
                     param.detach().cpu().clone().numpy(),
                     self.epoch_counter
                 )
-
-    def checkpoint(self):
         checkpoint_dir = self.exp_folder / f'{self.epoch_counter:04}'
         checkpoint_dir.mkdir()
         self.run_validation()
         self.render_n_games(checkpoint_dir)
         self.save(checkpoint_dir)
+        self.summary_writer.add_scalar('Time/checkpoint_time_s',
+                                       (time.time() - checkpoint_start_time),
+                                       int(self.epoch_counter / self.checkpoint_freq))
 
     def run_validation(self):
         return None
@@ -316,7 +331,7 @@ class AWAC:
         if self.checkpoint_render_n_games > 0:
             save_dir = checkpoint_dir / 'replays'
             save_dir.mkdir()
-            rendering_env = ge.GooseEnvVectorized(self.env.obs_type, self.env.reward_type,
+            rendering_env = ge.GooseEnvVectorized(self.env.obs_type, self.env.reward_type, self.env.action_masking,
                                                   n_envs=min(self.env.n_envs, self.checkpoint_render_n_games),
                                                   silent_reset=False)
             n_envs_rendered = 0
@@ -324,16 +339,19 @@ class AWAC:
             s = torch.from_numpy(s)
             while n_envs_rendered < self.checkpoint_render_n_games:
                 s_shape = s.shape
-                available_actions_mask = torch.from_numpy(
-                    info_dict['available_actions_mask']
-                ).to(device=self.device).view(-1, 4)
+                if self.use_action_masking:
+                    available_actions_mask = torch.from_numpy(
+                        info_dict['available_actions_mask']
+                    ).to(device=self.device).view(-1, 4)
+                else:
+                    available_actions_mask = None
                 if self.deterministic_validation_policy:
-                    a = self.model.sample_action(
+                    a = self.model.choose_best_action(
                         s.to(device=self.device).view(-1, *s_shape[-3:]),
                         available_actions_mask=available_actions_mask
                     ).detach().cpu()
                 else:
-                    a = self.model.choose_best_action(
+                    a = self.model.sample_action(
                         s.to(device=self.device).view(-1, *s_shape[-3:]),
                         available_actions_mask=available_actions_mask
                     ).detach().cpu()

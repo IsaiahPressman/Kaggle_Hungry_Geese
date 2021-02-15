@@ -129,7 +129,12 @@ class BasicActorCriticNetwork(nn.Module):
                 logits, values = self.forward(states)
         if available_actions_mask is not None:
             logits.masked_fill_(~available_actions_mask, float('-inf'))
-        probs = F.softmax(logits, dim=-1)
+        # In case all actions are masked, select one at random
+        probs = F.softmax(torch.where(
+            logits.isneginf().all(axis=-1, keepdim=True),
+            torch.zeros_like(logits),
+            logits
+        ), dim=-1)
         m = distributions.Categorical(probs)
         sampled_actions = m.sample()
         if train:

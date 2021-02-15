@@ -53,6 +53,7 @@ class ObsType(Enum):
 class RewardType(Enum):
     EVERY_STEP_ZERO_SUM = auto()
     EVERY_STEP_LENGTH = auto()
+    ON_EAT_AND_ON_DEATH = auto()
     RANK_ON_DEATH = auto()
 
     def get_cumulative_reward_spec(self) -> Tuple[Optional[float], Optional[float]]:
@@ -63,6 +64,8 @@ class RewardType(Enum):
             return 0., 1.
         elif self == RewardType.EVERY_STEP_LENGTH:
             return 0., 1.
+        elif self == RewardType.ON_EAT_AND_ON_DEATH:
+            return -1., 1.
         elif self == RewardType.RANK_ON_DEATH:
             return -1., 1.
         else:
@@ -78,6 +81,10 @@ class RewardType(Enum):
             value_shift = 0.
         elif self == RewardType.EVERY_STEP_LENGTH:
             value_activation = nn.Sigmoid()
+            value_scale = 1.
+            value_shift = 0.
+        elif self == RewardType.ON_EAT_AND_ON_DEATH:
+            value_activation = nn.Tanh()
             value_scale = 1.
             value_shift = 0.
         elif self == RewardType.RANK_ON_DEATH:
@@ -272,6 +279,30 @@ class GooseEnvVectorized:
                 rewards
             )
             rewards = rewards / MAX_NUM_STEPS
+        elif self.reward_type == RewardType.ON_EAT_AND_ON_DEATH:
+            # A small reward is given to a goose when it eats
+            new_kaggle_rewards = np.array([[agent['reward'] for agent in env.steps[-1]] for env in self.wrapped_envs])
+            goose_ate = np.logical_or(
+                new_kaggle_rewards > (self.kaggle_rewards + GOOSE_MAX_LEN + 1.),
+                np.logical_and(
+                    new_kaggle_rewards == (self.kaggle_rewards + GOOSE_MAX_LEN + 1.),
+                    (self.kaggle_timesteps[:, np.newaxis] + 1) % HUNGER_RATE == 0
+                )
+            )
+            # Rewards start at 0, not 101, so this np.where catches that case
+            goose_ate = np.where(
+                self.kaggle_timesteps[:, np.newaxis] == 0,
+                new_kaggle_rewards > 2 * (GOOSE_MAX_LEN + 1.) + 1.,
+                goose_ate
+            )
+            rewards = goose_ate / (N_ROWS * N_COLS)
+            # A reward of -1 is assigned to an agent on death, unless they win, in which case they receive 0
+            agent_rankings = stats.rankdata(current_standings, method='max', axis=1)
+            rewards = rewards + np.where(
+                np.logical_and(np.logical_xor(agent_already_dones, self.agent_dones), agent_rankings < self.n_players),
+                -1.,
+                0.
+            )
         elif self.reward_type == RewardType.RANK_ON_DEATH:
             agent_rankings = stats.rankdata(current_standings, method='average', axis=1)
             # Rescale rankings from 1 to n_players to lie between -1 to 1

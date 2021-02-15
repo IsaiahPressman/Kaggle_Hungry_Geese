@@ -70,7 +70,8 @@ if __name__ == '__main__':
         agent_paths = args.agent_paths
     else:
         raise ValueError(f'1, 2, or 4 agent paths must be provided, got {len(args.agent_paths)}')
-    print(' -vs- '.join([Path(ap).stem for ap in agent_paths]))
+    vs_message = ' -vs- '.join([Path(ap).stem for ap in agent_paths])
+    print(vs_message)
     
     if args.n_workers == 1:
         results_and_game_lengths = []
@@ -101,6 +102,7 @@ if __name__ == '__main__':
         print(f'Round {i+1}: {SEP.join([f"{r:.2f}" for r in ranks])}')
     all_results = np.vstack(all_results)
 
+    print(vs_message)
     mean_scores_out = 'Mean scores: '
     for score in all_results.mean(axis=0):
         mean_scores_out += f'{score:.2f}{SEP}'
