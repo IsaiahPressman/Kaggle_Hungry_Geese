@@ -64,6 +64,7 @@ class Agent:
     def __call__(self, obs: Observation, conf: Configuration):
         self.preprocess(obs, conf)
         my_next_position = self.compute_next_position(obs, conf)
+        print(f'Remaining overage time: {obs.remaining_overage_time:.2f}')
         return self.get_direction(np.array(self.head_position), np.array(my_next_position)).name
     
     def compute_next_position(self, obs: Observation, conf: Configuration):
