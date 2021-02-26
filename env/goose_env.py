@@ -9,8 +9,10 @@ from typing import *
 
 with contextlib.redirect_stdout(io.StringIO()):
     # Silence gfootball import error
-    from kaggle_environments import make
+    from kaggle_environments import make as kaggle_make
     from kaggle_environments.envs.hungry_geese.hungry_geese import Action, row_col
+
+from .lightweight_env import make as lightweight_make
 
 
 class ActionMasking(Enum):
@@ -130,36 +132,42 @@ def _row_col(position: int) -> Tuple[int, int]:
     return row_col(position, N_COLS)
 
 
-class GooseEnvVectorized:
+class VectorizedEnv:
     def __init__(self, obs_type: Union[ObsType, Sequence[ObsType]], reward_type: RewardType,
                  action_masking: ActionMasking = ActionMasking.OPPOSITE,
-                 n_envs: int = 1, n_players: int = 4, silent_reset: bool = True):
+                 n_envs: int = 1, n_players: int = 4, silent_reset: bool = True, make_fn=lightweight_make):
         self.obs_type = obs_type
         self.reward_type = reward_type
         self.action_masking = action_masking
         self.n_envs = n_envs
         self.n_players = n_players
         self.silent_reset = silent_reset
+        self.make_fn = make_fn
 
         self.multi_obs_type = type(self.obs_type) != ObsType
-        self.wrapped_envs = [make('hungry_geese') for _ in range(self.n_envs)]
+        self.wrapped_envs = [self.make_fn('hungry_geese') for _ in range(self.n_envs)]
         self.agent_dones = np.zeros((self.n_envs, self.n_players), dtype=np.bool)
         self.goose_head_locs = np.zeros((self.n_envs, self.n_players, 2), dtype=np.int64)
         self.available_actions_mask = np.ones((self.n_envs, self.n_players, 4), dtype=np.bool)
         self.episodes_finished_last_turn = np.zeros(self.n_envs, dtype=np.bool)
         self.episodes_finished_last_turn_info = [{} for _ in range(self.n_envs)]
 
-        self.hard_reset()
+        self._hard_reset()
 
     def hard_reset(self):
         """
         Resets all environments, whether or not they are done
         """
-        self._reset_specific_envs(np.ones_like(self.episodes_done))
-        self._update_other_info()
-
+        self._hard_reset()
         rewards = np.zeros((self.n_envs, self.n_players))
         return self.obs, rewards, self.agent_dones, self.info_dict
+
+    def _hard_reset(self):
+        """
+        Resets all environments, whether or not they are done, but does not return an observation
+        """
+        self._reset_specific_envs(np.ones_like(self.episodes_done))
+        self._update_other_info()
 
     def soft_reset(self):
         """

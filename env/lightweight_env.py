@@ -21,8 +21,11 @@ class LightweightEnv:
         self.last_actions = None
         self.step_counter = None
         self.rewards = None
+        self.steps = None
 
-    def reset(self, num_agents: int = 1) -> Tuple[List[Dict], Configuration]:
+        self.reset()
+
+    def reset(self, num_agents: int = 1) -> List[Dict]:
         self.agent_count = num_agents
         heads = sample(range(self.n_cols * self.n_rows), self.agent_count)
         self.geese = [[head] for head in heads]
@@ -33,8 +36,9 @@ class LightweightEnv:
         self.last_actions = [Action.NORTH for _ in range(self.agent_count)]
         self.step_counter = 0
         self.rewards = [0 for _ in range(self.agent_count)]
+        self.steps = [self.state]
 
-        return self.state, self.configuration
+        return self.steps[-1]
 
     def step(self, actions: List[str]):
         assert not self.done
@@ -113,11 +117,13 @@ class LightweightEnv:
                 # Adding 1 to len(env.steps) ensures that if an agent gets reward 4507, it died on turn 45 with length 7
                 self.rewards[index] = (self.step_counter + 1) * (self.configuration.max_length + 1) + len(goose)
 
-        return self.state
+        self.steps.append(self.state)
+        return self.steps[-1]
 
     @property
     def state(self) -> List[Dict]:
         state_dict_list = []
+        statuses = self.get_statuses()
         for i in range(self.agent_count):
             dict_i = {
                 'action': self.last_actions[i].name,
@@ -126,8 +132,8 @@ class LightweightEnv:
                 'observation': {
                     # 'remainingOverageTime' is not computed, and so is excluded
                     'index': i
-                }
-                # 'status' is not used, and so is excluded
+                },
+                'status': statuses[i]
             }
             if i == 0:
                 dict_i['observation'].update({
@@ -145,6 +151,12 @@ class LightweightEnv:
         n_geese_alive = len([True for goose in self.geese if len(goose) > 0])
         return n_geese_alive <= 1
 
+    def get_statuses(self) -> List[str]:
+        if self.done:
+            return ['DONE' for _ in range(self.agent_count)]
+        else:
+            return ['ACTIVE' if len(goose) > 0 else 'DONE' for goose in self.geese]
+
     def clone(self):
         cloned_env = LightweightEnv(self.configuration)
 
@@ -154,8 +166,12 @@ class LightweightEnv:
         cloned_env.last_actions = copy.copy(self.last_actions)
         cloned_env.step_counter = self.step_counter
         cloned_env.rewards = self.rewards
+        cloned_env.steps = copy.deepcopy(self.steps)
 
         return cloned_env
+
+    def __deepcopy__(self, memodict={}):
+        return self.clone()
 
     def debug_print(self, out: str):
         if self.debug:

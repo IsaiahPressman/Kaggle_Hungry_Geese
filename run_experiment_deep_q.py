@@ -1,13 +1,9 @@
-import base64
 import copy
 from pathlib import Path
-import pickle
 import shutil
-import torch
 from torch import nn
 
 from rl.deep_q import DeepQ
-from rl import goose_env as ge
 from rl import models
 from rl.replay_buffers import *
 from rl.utils import format_experiment_name, EpsilonScheduler
@@ -115,7 +111,7 @@ if __name__ == '__main__':
                                                          action_masking,
                                                          channel_dims,
                                                          model_kwargs['conv_block_kwargs']) + '_v1'
-    deep_q_alg = DeepQ(model, ge.GooseEnvVectorized(**env_kwargs), replay_buffer,
+    deep_q_alg = DeepQ(model, ge.VectorizedEnv(**env_kwargs), replay_buffer,
                        validation_kwargs_dicts=validation_kwargs_dicts,
                        device=DEVICE,
                        exp_folder=Path(f'runs/deep_q/{experiment_name}'),

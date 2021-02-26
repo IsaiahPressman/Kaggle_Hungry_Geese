@@ -1,9 +1,8 @@
 import torch
-from torch import nn
 from typing import *
 
 # Custom imports
-from . import goose_env as ge
+from env import goose_env as ge
 
 
 def format_experiment_name(obs_type: ge.ObsType,

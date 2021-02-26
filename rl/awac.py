@@ -13,7 +13,7 @@ import tqdm
 from typing import *
 
 # Custom imports
-from . import goose_env as ge
+from env import goose_env as ge
 from .models import BasicActorCriticNetwork
 from .replay_buffers import BasicReplayBuffer
 
@@ -331,9 +331,9 @@ class AWAC:
         if self.checkpoint_render_n_games > 0:
             save_dir = checkpoint_dir / 'replays'
             save_dir.mkdir()
-            rendering_env = ge.GooseEnvVectorized(self.env.obs_type, self.env.reward_type, self.env.action_masking,
-                                                  n_envs=min(self.env.n_envs, self.checkpoint_render_n_games),
-                                                  silent_reset=False)
+            rendering_env = ge.VectorizedEnv(self.env.obs_type, self.env.reward_type, self.env.action_masking,
+                                             n_envs=min(self.env.n_envs, self.checkpoint_render_n_games),
+                                             silent_reset=False)
             n_envs_rendered = 0
             s, _, _, info_dict = rendering_env.hard_reset()
             s = torch.from_numpy(s)
