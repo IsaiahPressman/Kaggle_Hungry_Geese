@@ -13,7 +13,7 @@ import tqdm
 from typing import *
 
 # Custom imports
-from env import goose_env as ge
+from ..env import goose_env as ge
 from .models import BasicActorCriticNetwork
 from .replay_buffers import BasicReplayBuffer
 

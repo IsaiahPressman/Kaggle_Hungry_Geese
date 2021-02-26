@@ -1,8 +1,12 @@
 import copy
 from kaggle_environments import make as kaggle_make
 from kaggle_environments.envs.hungry_geese.hungry_geese import Action, Configuration, histogram, translate
+import numpy as np
 from random import sample
 from typing import *
+
+
+ACTIONS_TUPLE = tuple(Action)
 
 
 class LightweightEnv:
@@ -25,7 +29,7 @@ class LightweightEnv:
 
         self.reset()
 
-    def reset(self, num_agents: int = 1) -> List[Dict]:
+    def reset(self, num_agents: int = 4) -> List[Dict]:
         self.agent_count = num_agents
         heads = sample(range(self.n_cols * self.n_rows), self.agent_count)
         self.geese = [[head] for head in heads]
@@ -40,9 +44,15 @@ class LightweightEnv:
 
         return self.steps[-1]
 
-    def step(self, actions: List[str]):
+    def step(self, actions: Union[List[str], Sequence[int], np.ndarray]):
         assert not self.done
+
+        if type(actions) == np.ndarray:
+            actions = actions.ravel()
         assert len(actions) == self.agent_count, f'Got {len(actions)} actions for {self.agent_count} agents'
+        if type(actions[0]) != str:
+            actions = [ACTIONS_TUPLE[i].name for i in actions]
+
         for index, goose in enumerate(self.geese):
             if len(goose) == 0:
                 continue

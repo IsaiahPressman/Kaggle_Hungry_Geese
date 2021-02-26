@@ -3,7 +3,7 @@ import random
 import torch
 from typing import *
 
-from env import goose_env as ge
+from ..env import goose_env as ge
 
 
 class BasicReplayBuffer:

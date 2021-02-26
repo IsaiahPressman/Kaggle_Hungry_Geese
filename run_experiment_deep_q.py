@@ -3,10 +3,10 @@ from pathlib import Path
 import shutil
 from torch import nn
 
-from rl.deep_q import DeepQ
-from rl import models
-from rl.replay_buffers import *
-from rl.utils import format_experiment_name, EpsilonScheduler
+from deep_q import DeepQ
+import models
+from replay_buffers import *
+from utils import format_experiment_name, EpsilonScheduler
 
 if __name__ == '__main__':
     DEVICE = torch.device('cuda')

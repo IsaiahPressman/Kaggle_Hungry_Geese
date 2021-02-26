@@ -1,32 +1,15 @@
-import contextlib
 import copy
 from enum import auto, Enum
-import io
+from kaggle_environments.envs.hungry_geese.hungry_geese import Action, row_col
 import numpy as np
 from scipy import stats
 from torch import nn
 from typing import *
 
-with contextlib.redirect_stdout(io.StringIO()):
-    # Silence gfootball import error
-    from kaggle_environments import make as kaggle_make
-    from kaggle_environments.envs.hungry_geese.hungry_geese import Action, row_col
 
+from ..config import *
 from .lightweight_env import make as lightweight_make
-
-
-class ActionMasking(Enum):
-    """
-    Available action masking settings returned by info_dict['available_actions_mask'].
-    NONE: No action masking
-    OPPOSITE: Only mask actions that are the opposite of the last action taken
-    FULL: Mask opposite actions and any action that would result in moving into a square with a goose body
-        (still allows movement into squares with goose heads for geese of length 1 or tails for any goose)
-        Warning: FULL action masking will sometimes result in no available actions - take this into account
-    """
-    NONE = auto()
-    OPPOSITE = auto()
-    FULL = auto()
+from ..utils import ActionMasking, row_col
 
 
 class ObsType(Enum):
@@ -102,12 +85,6 @@ class RewardType(Enum):
         }
 
 
-HUNGER_RATE = 40.
-MAX_NUM_STEPS = 200.
-GOOSE_MAX_LEN = 99.
-N_ROWS = 7
-N_COLS = 11
-
 _DIRECTIONS_DICT = {act.to_row_col(): act.name for act in Action}
 for key, val in copy.copy(_DIRECTIONS_DICT).items():
     if key == (-1, 0):
@@ -123,13 +100,9 @@ for key, val in copy.copy(_DIRECTIONS_DICT).items():
 
 
 def _get_direction(from_position: int, to_position: int) -> str:
-    from_loc = np.array(_row_col(from_position))
-    to_loc = np.array(_row_col(to_position))
+    from_loc = np.array(row_col(from_position))
+    to_loc = np.array(row_col(to_position))
     return _DIRECTIONS_DICT[tuple(to_loc - from_loc)]
-
-
-def _row_col(position: int) -> Tuple[int, int]:
-    return row_col(position, N_COLS)
 
 
 class VectorizedEnv:
@@ -331,6 +304,13 @@ class VectorizedEnv:
         return self.obs, rewards, agent_dones_cached, self.info_dict
 
     @property
+    def state(self) -> Union[np.ndarray, List[np.ndarray]]:
+        """
+        Alias for self.obs
+        """
+        return self.obs
+
+    @property
     def obs(self) -> Union[np.ndarray, List[np.ndarray]]:
         if self.multi_obs_type:
             return [self._get_obs(ot) for ot in self.obs_type]
@@ -345,42 +325,9 @@ class VectorizedEnv:
         for env_idx, env in enumerate(self.wrapped_envs):
             for agent_idx, goose_loc_list in enumerate(env.steps[-1][0]['observation']['geese']):
                 if len(goose_loc_list) > 0:
-                    self.goose_head_locs[env_idx, agent_idx] = _row_col(goose_loc_list[0])
-        self.available_actions_mask = np.ones((self.n_envs, self.n_players, 4), dtype=np.bool)
-        if self.action_masking == ActionMasking.NONE:
-            pass
-        elif self.action_masking == ActionMasking.OPPOSITE:
-            for env_idx, env in enumerate(self.wrapped_envs):
-                if env.steps[-1][0]['observation']['step'] > 0:
-                    for agent_idx, agent in enumerate(env.steps[-1]):
-                        last_action = Action[agent['action']]
-                        banned_action_idx = list(Action).index(last_action.opposite())
-                        self.available_actions_mask[env_idx, agent_idx, banned_action_idx] = False
-        elif self.action_masking == ActionMasking.FULL:
-            for env_idx, env in enumerate(self.wrapped_envs):
-                if env.steps[-1][0]['observation']['step'] > 0:
-                    all_goose_locs = []
-                    for goose_loc_list in env.steps[-1][0]['observation']['geese']:
-                        # Ignore geese that are only a head
-                        if len(goose_loc_list) > 1:
-                            # Don't mask the tail position
-                            all_goose_locs += [_row_col(n) for n in goose_loc_list[:-1]]
-                    for agent_idx, agent in enumerate(env.steps[-1]):
-                        goose_loc_list = env.steps[-1][0]['observation']['geese'][agent_idx]
-                        if len(goose_loc_list) > 0:
-                            last_action = Action[agent['action']]
-                            banned_action_idx = list(Action).index(last_action.opposite())
-                            self.available_actions_mask[env_idx, agent_idx, banned_action_idx] = False
-                            head_loc = np.array(_row_col(goose_loc_list[0]))
-                            for act in list(Action):
-                                destination = head_loc + np.array(act.to_row_col())
-                                destination[0] = (N_ROWS + destination[0]) % N_ROWS
-                                destination[1] = (N_COLS + destination[1]) % N_COLS
-                                if tuple(destination) in all_goose_locs:
-                                    banned_action_idx = list(Action).index(act)
-                                    self.available_actions_mask[env_idx, agent_idx, banned_action_idx] = False
-        else:
-            raise ValueError(f'Unrecognized action_masking: {self.action_masking}')
+                    self.goose_head_locs[env_idx, agent_idx] = row_col(goose_loc_list[0])
+        self.available_actions_mask = np.stack([self.action_masking.get_action_mask(env.steps[-1])
+                                                for env in self.wrapped_envs], axis=0)
         self.kaggle_rewards = np.array([[agent['reward'] for agent in env.steps[-1]] for env in self.wrapped_envs])
         self.kaggle_timesteps = np.array([env.steps[-1][0]['observation']['step'] for env in self.wrapped_envs])
 
@@ -457,7 +404,7 @@ def create_obs_tensor(observation, obs_type):
         current_step = np.zeros_like(contains_food)
 
         for food_loc_n in observation[0]['observation']['food']:
-            food_loc = _row_col(food_loc_n)
+            food_loc = row_col(food_loc_n)
             contains_food[:, :, food_loc[0], food_loc[1]] = 1.
         steps_since_starvation[:] = observation[0]['observation']['step'] % HUNGER_RATE
         current_step[:] = observation[0]['observation']['step']
@@ -472,7 +419,7 @@ def create_obs_tensor(observation, obs_type):
                 goose_loc_list = observation[0]['observation']['geese'][agent_idx]
                 # Make sure the goose is still alive
                 if len(goose_loc_list) > 0:
-                    head_loc = _row_col(goose_loc_list[0])
+                    head_loc = row_col(goose_loc_list[0])
                     player_channels[main_agent_idx,
                                     channel_idx_base + idx_dict['contains_head'],
                                     (*head_loc)] = 1.
@@ -486,7 +433,7 @@ def create_obs_tensor(observation, obs_type):
                 # Make sure the goose is more than just a head
                 if len(goose_loc_list) > 1:
                     for body_loc_n in goose_loc_list[1:]:
-                        body_loc = _row_col(body_loc_n)
+                        body_loc = row_col(body_loc_n)
                         player_channels[main_agent_idx,
                                         channel_idx_base + idx_dict['contains_body'],
                                         (*body_loc)] = 1.
@@ -495,7 +442,7 @@ def create_obs_tensor(observation, obs_type):
                             goose_loc_list[i],
                             goose_loc_list[i + 1]
                         )]
-                        body_loc = _row_col(goose_loc_list[i])
+                        body_loc = row_col(goose_loc_list[i])
                         player_channels[main_agent_idx,
                                         channel_idx_base + idx_dict[connection_channel],
                                         (*body_loc)] = 1.
@@ -503,7 +450,7 @@ def create_obs_tensor(observation, obs_type):
                             goose_loc_list[i + 1],
                             goose_loc_list[i]
                         )]
-                        next_body_loc = _row_col(goose_loc_list[i + 1])
+                        next_body_loc = row_col(goose_loc_list[i + 1])
                         player_channels[main_agent_idx,
                                         channel_idx_base + idx_dict[next_connection_channel],
                                         (*next_body_loc)] = 1.
@@ -515,7 +462,7 @@ def create_obs_tensor(observation, obs_type):
         ], axis=1)
         for centered_agent_idx, goose_loc_list in enumerate(observation[0]['observation']['geese']):
             if len(goose_loc_list) > 0:
-                head_loc = np.array(_row_col(goose_loc_list[0]))
+                head_loc = np.array(row_col(goose_loc_list[0]))
                 translation = np.array([int((N_ROWS - 1) / 2), int((N_COLS - 1) / 2)]) - head_loc
                 obs[centered_agent_idx] = np.roll(
                     obs[centered_agent_idx], translation, axis=(-2, -1)
@@ -555,7 +502,7 @@ def create_obs_tensor(observation, obs_type):
         steps_since_starvation = np.zeros_like(contains_food)
         current_step = np.zeros_like(contains_food)
         for food_loc_n in observation[0]['observation']['food']:
-            food_loc = _row_col(food_loc_n)
+            food_loc = row_col(food_loc_n)
             contains_food[:, :, food_loc[0], food_loc[1]] = 1.
         steps_since_starvation[:] = observation[0]['observation']['step'] % HUNGER_RATE
         current_step[:] = observation[0]['observation']['step']
@@ -570,20 +517,20 @@ def create_obs_tensor(observation, obs_type):
                 goose_loc_list = observation[0]['observation']['geese'][agent_idx]
                 # Make sure the goose is still alive
                 if len(goose_loc_list) > 0:
-                    head_loc = _row_col(goose_loc_list[0])
+                    head_loc = row_col(goose_loc_list[0])
                     player_channels[main_agent_idx,
                                     channel_idx_base + idx_dict['contains_head'],
                                     (*head_loc)] = 1.
                 # Check if the goose has a tail
                 if len(goose_loc_list) > 1:
-                    tail_loc = _row_col(goose_loc_list[-1])
+                    tail_loc = row_col(goose_loc_list[-1])
                     player_channels[main_agent_idx,
                                     channel_idx_base + idx_dict['contains_tail'],
                                     (*tail_loc)] = 1.
                 # Check if the goose is more than just a head and tail
                 if len(goose_loc_list) > 2:
                     for body_loc_n in goose_loc_list[1:-1]:
-                        body_loc = _row_col(body_loc_n)
+                        body_loc = row_col(body_loc_n)
                         player_channels[main_agent_idx,
                                         channel_idx_base + idx_dict['contains_body'],
                                         (*body_loc)] = 1.
@@ -595,7 +542,7 @@ def create_obs_tensor(observation, obs_type):
         ], axis=1)
         for centered_agent_idx, goose_loc_list in enumerate(observation[0]['observation']['geese']):
             if len(goose_loc_list) > 0:
-                head_loc = np.array(_row_col(goose_loc_list[0]))
+                head_loc = np.array(row_col(goose_loc_list[0]))
                 translation = np.array([int((N_ROWS - 1) / 2), int((N_COLS - 1) / 2)]) - head_loc
                 obs[centered_agent_idx] = np.roll(
                     obs[centered_agent_idx], translation, axis=(-2, -1)
@@ -656,7 +603,7 @@ def create_obs_tensor(observation, obs_type):
             Action.WEST.name: last_action_w
         }
         for food_loc_n in observation[0]['observation']['food']:
-            food_loc = _row_col(food_loc_n)
+            food_loc = row_col(food_loc_n)
             contains_food[:, food_loc[0], food_loc[1]] = 1.
         steps_since_starvation[:] = observation[0]['observation']['step'] % HUNGER_RATE
         current_step[:] = observation[0]['observation']['step']
@@ -666,7 +613,7 @@ def create_obs_tensor(observation, obs_type):
                 goose_loc_list = observation[0]['observation']['geese'][agent_idx]
                 # Make sure the goose is still alive
                 if len(goose_loc_list) > 0:
-                    head_loc = _row_col(goose_loc_list[0])
+                    head_loc = row_col(goose_loc_list[0])
                     contains_head[centered_agent_idx, (*head_loc)] = 1. * is_centered_multiplier
                     if observation[0]['observation']['step'] > 0:
                         last_action_channel = last_action_dict[observation[agent_idx]['action']]
@@ -674,20 +621,20 @@ def create_obs_tensor(observation, obs_type):
                 # Make sure the goose is more than just a head
                 if len(goose_loc_list) > 1:
                     for body_loc_n in goose_loc_list[1:]:
-                        body_loc = _row_col(body_loc_n)
+                        body_loc = row_col(body_loc_n)
                         contains_body[centered_agent_idx, (*body_loc)] = 1. * is_centered_multiplier
                     for i in range(len(goose_loc_list) - 1):
                         connection_channel = connected_dict[_get_direction(
                             goose_loc_list[i],
                             goose_loc_list[i + 1]
                         )]
-                        body_loc = _row_col(goose_loc_list[i])
+                        body_loc = row_col(goose_loc_list[i])
                         connection_channel[centered_agent_idx, (*body_loc)] = 1. * is_centered_multiplier
                         next_connection_channel = connected_dict[_get_direction(
                             goose_loc_list[i + 1],
                             goose_loc_list[i]
                         )]
-                        next_body_loc = _row_col(goose_loc_list[i + 1])
+                        next_body_loc = row_col(goose_loc_list[i + 1])
                         next_connection_channel[centered_agent_idx, (*next_body_loc)] = 1. * is_centered_multiplier
         obs = np.stack([
             contains_head,
@@ -706,7 +653,7 @@ def create_obs_tensor(observation, obs_type):
         ], axis=1)
         for centered_agent_idx, goose_loc_list in enumerate(observation[0]['observation']['geese']):
             if len(goose_loc_list) > 0:
-                head_loc = np.array(_row_col(goose_loc_list[0]))
+                head_loc = np.array(row_col(goose_loc_list[0]))
                 translation = np.array([3, 5]) - head_loc
                 obs[centered_agent_idx] = np.roll(
                     obs[centered_agent_idx], translation, axis=(-2, -1)
@@ -762,13 +709,13 @@ def create_obs_tensor(observation, obs_type):
             Action.WEST.name: last_action_w
         }
         for food_loc_n in observation[0]['observation']['food']:
-            food_loc = _row_col(food_loc_n)
+            food_loc = row_col(food_loc_n)
             contains_food[food_loc[0], food_loc[1]] = 1.
         for agent_idx in range(n_players):
             goose_loc_list = observation[0]['observation']['geese'][agent_idx]
             # Make sure the goose is still alive
             if len(goose_loc_list) > 0:
-                head_loc = _row_col(goose_loc_list[0])
+                head_loc = row_col(goose_loc_list[0])
                 contains_head[head_loc[0], head_loc[1]] = 1.
                 if observation[0]['observation']['step'] > 0:
                     last_action_channel = last_action_dict[observation[agent_idx]['action']]
@@ -776,20 +723,20 @@ def create_obs_tensor(observation, obs_type):
             # Make sure the goose is more than just a head
             if len(goose_loc_list) > 1:
                 for body_loc_n in goose_loc_list[1:]:
-                    body_loc = _row_col(body_loc_n)
+                    body_loc = row_col(body_loc_n)
                     contains_body[body_loc[0], body_loc[1]] = 1.
                 for i in range(len(goose_loc_list) - 1):
                     connection_channel = connected_dict[_get_direction(
                         goose_loc_list[i],
                         goose_loc_list[i + 1]
                     )]
-                    body_loc = _row_col(goose_loc_list[i])
+                    body_loc = row_col(goose_loc_list[i])
                     connection_channel[body_loc[0], body_loc[1]] = 1.
                     next_connection_channel = connected_dict[_get_direction(
                         goose_loc_list[i + 1],
                         goose_loc_list[i]
                     )]
-                    next_body_loc = _row_col(goose_loc_list[i + 1])
+                    next_body_loc = row_col(goose_loc_list[i + 1])
                     next_connection_channel[next_body_loc[0], next_body_loc[1]] = 1.
         steps_since_starvation[:] = observation[0]['observation']['step'] % HUNGER_RATE
         current_step[:] = observation[0]['observation']['step']

@@ -1,19 +1,21 @@
 from kaggle_environments.envs.hungry_geese.hungry_geese import Observation, Configuration, Action, row_col
-import numpy as np
 import random
 import copy
 
 frame = 0
 opposites = {Action.EAST: Action.WEST, Action.WEST: Action.EAST, Action.NORTH: Action.SOUTH, Action.SOUTH: Action.NORTH}
 action_meanings = {Action.EAST: (1, 0), Action.WEST: (-1, 0), Action.NORTH: (0, -1), Action.SOUTH: (0, 1)}
-action_names = {(1, 0): Action.EAST, (-10, 0): Action.EAST, (-1, 0): Action.WEST, (10, 0): Action.WEST, (0, -1): Action.NORTH, (0, 6): Action.NORTH, (0, -6): Action.SOUTH, (0, 1): Action.SOUTH}
+action_names = {(1, 0): Action.EAST, (-10, 0): Action.EAST, (-1, 0): Action.WEST, (10, 0): Action.WEST,
+                (0, -1): Action.NORTH, (0, 6): Action.NORTH, (0, -6): Action.SOUTH, (0, 1): Action.SOUTH}
 strValue = {Action.EAST: 'EAST', Action.WEST: 'WEST', Action.NORTH: 'NORTH', Action.SOUTH: 'SOUTH'}
 all_last_actions = [None, None, None, None]
 revert_last_actions = [None, None, None, None]
 last_observation = None
 
+
 class Obs:
     pass
+
 
 def setLastActions(observation, configuration):
     global frame, revert_last_actions, all_last_actions
@@ -45,7 +47,7 @@ def getValidDirections(observation, configuration, gooseIndex):
         row, col = getRowColForAction(observation, configuration, gooseIndex, direction)
         if not willGooseBeThere(observation, configuration, row, col) and not all_last_actions[gooseIndex] == opposites[
             direction]:
-            returnDirections.append(direction)        
+            returnDirections.append(direction)
     if len(returnDirections) == 0:
         return directions
     return returnDirections
@@ -56,7 +58,8 @@ def randomTurn(observation, configuration, actionOverrides, rewards, fr):
     for i in range(4):
         if len(observation.geese[i]) > 0:
             if i in actionOverrides.keys():
-                newObservation = performActionForGoose(observation, configuration, i, newObservation, actionOverrides[i])
+                newObservation = performActionForGoose(observation, configuration, i, newObservation,
+                                                       actionOverrides[i])
             else:
                 newObservation = randomActionForGoose(observation, configuration, i, newObservation)
 
@@ -69,14 +72,14 @@ def randomTurn(observation, configuration, actionOverrides, rewards, fr):
 def hunger(observation, fr):
     if fr % 40 == 0:
         for g, goose in enumerate(observation.geese):
-            goose = goose[0:len(goose)-1]
-            
+            goose = goose[0:len(goose) - 1]
 
 
 def updateRewards(observation, configuration, rewards, fr):
     for g, goose in enumerate(observation.geese):
         if len(goose) > 0:
             rewards[g] = 2 * fr + len(goose)
+
 
 def checkForCollisions(observation, configuration):
     killed = []
@@ -106,16 +109,17 @@ def randomActionForGoose(observation, configuration, gooseIndex, newObservation)
     row, col = getRowColForAction(observation, configuration, gooseIndex, action)
     newObservation.geese[gooseIndex] = [row * configuration.columns + col] + newObservation.geese[gooseIndex]
     if not isFoodThere(observation, configuration, row, col):
-        newObservation.geese[gooseIndex] = newObservation.geese[gooseIndex][0:len(newObservation.geese[gooseIndex])-1]  
+        newObservation.geese[gooseIndex] = newObservation.geese[gooseIndex][0:len(newObservation.geese[gooseIndex]) - 1]
     return newObservation
+
 
 def performActionForGoose(observation, configuration, gooseIndex, newObservation, action):
     row, col = getRowColForAction(observation, configuration, gooseIndex, action)
     newObservation.geese[gooseIndex][:0] = [row * configuration.columns + col]
     if not isFoodThere(observation, configuration, row, col):
-        newObservation.geese[gooseIndex] = newObservation.geese[gooseIndex][0:len(newObservation.geese[gooseIndex])-1]  
+        newObservation.geese[gooseIndex] = newObservation.geese[gooseIndex][0:len(newObservation.geese[gooseIndex]) - 1]
     return newObservation
-        
+
 
 def isFoodThere(observation, configuration, row, col):
     for food in observation.food:
@@ -180,7 +184,7 @@ def simulateMatches(observation, configuration, numMatches, depth):
             scores.append(0)
         else:
             scores.append(rewards[observation.index] / mean)
-    
+
     print('frame: ', frame)
     print('options: ', options)
     print('scores: ', scores)
@@ -194,7 +198,6 @@ def simulateMatches(observation, configuration, numMatches, depth):
     return options[scores.index(max(scores))]
 
 
-
 def agent(obs_dict, config_dict):
     global last_observation, all_last_actions, opposites, frame
     observation = Observation(obs_dict)
@@ -204,10 +207,10 @@ def agent(obs_dict, config_dict):
     if myLength < 5:
         my_action = simulateMatches(observation, configuration, 300, 3)
     elif myLength < 9:
-        my_action = simulateMatches(observation ,configuration, 120, 6)
+        my_action = simulateMatches(observation, configuration, 120, 6)
     else:
         my_action = simulateMatches(observation, configuration, 85, 9)
-    
+
     last_observation = cloneObservation(observation)
     frame += 1
     return strValue[my_action]
