@@ -94,12 +94,11 @@ if __name__ == '__main__':
     all_game_lengths = []
     for i, (result, game_length) in enumerate(results_and_game_lengths):
         game_scores = np.array(result)
-        reward_range = np.linspace(-1., 1., 4)
-        agent_rankings = stats.rankdata(game_scores, method='max') - 1
-        ranks = reward_range[agent_rankings]
-        all_results.append(ranks)
+        agent_rankings = stats.rankdata(game_scores, method='average') - 1.
+        ranks_rescaled = 2. * agent_rankings / (4. - 1.) - 1.
+        all_results.append(ranks_rescaled)
         all_game_lengths.append(game_length)
-        print(f'Round {i+1}: {SEP.join([f"{r:.2f}" for r in ranks])}')
+        print(f'Round {i+1}: {SEP.join([f"{r:.2f}" for r in ranks_rescaled])}')
     all_results = np.vstack(all_results)
 
     print(vs_message)

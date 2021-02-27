@@ -40,7 +40,8 @@ class LightweightEnv:
         self.last_actions = [Action.NORTH for _ in range(self.agent_count)]
         self.step_counter = 0
         self.rewards = [0 for _ in range(self.agent_count)]
-        self.steps = [self.state]
+        self.steps = []
+        self._append_next_state()
 
         return self.steps[-1]
 
@@ -127,11 +128,10 @@ class LightweightEnv:
                 # Adding 1 to len(env.steps) ensures that if an agent gets reward 4507, it died on turn 45 with length 7
                 self.rewards[index] = (self.step_counter + 1) * (self.configuration.max_length + 1) + len(goose)
 
-        self.steps.append(self.state)
+        self._append_next_state()
         return self.steps[-1]
 
-    @property
-    def state(self) -> List[Dict]:
+    def _append_next_state(self) -> NoReturn:
         state_dict_list = []
         statuses = self.get_statuses()
         for i in range(self.agent_count):
@@ -154,7 +154,11 @@ class LightweightEnv:
                 })
             state_dict_list.append(dict_i)
 
-        return state_dict_list
+        self.steps.append(state_dict_list)
+
+    @property
+    def state(self) -> List[Dict]:
+        return self.steps[-1]
 
     @property
     def done(self) -> bool:
@@ -175,7 +179,7 @@ class LightweightEnv:
         cloned_env.food = copy.copy(self.food)
         cloned_env.last_actions = copy.copy(self.last_actions)
         cloned_env.step_counter = self.step_counter
-        cloned_env.rewards = self.rewards
+        cloned_env.rewards = copy.copy(self.rewards)
         cloned_env.steps = copy.deepcopy(self.steps)
 
         return cloned_env

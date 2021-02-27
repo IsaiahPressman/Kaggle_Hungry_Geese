@@ -12,13 +12,13 @@ class ActionMasking(Enum):
     Available action masking settings returned by info_dict['available_actions_mask'].
     NONE: No action masking
     OPPOSITE: Only mask actions that are the opposite of the last action taken
-    FULL: Mask opposite actions and any action that would result in moving into a square with a goose body
+    LETHAL: Mask opposite actions and any action that would result in moving into a square with a goose body
         (still allows movement into squares with goose heads for geese of length 1 or tails for any goose)
-        Warning: FULL action masking will sometimes result in no available actions - take this into account
+        Warning: LETHAL action masking will sometimes result in no available actions - take this into account
     """
     NONE = auto()
     OPPOSITE = auto()
-    FULL = auto()
+    LETHAL = auto()
 
     def get_action_mask(self, state: List[Dict]) -> np.ndarray:
         available_actions_mask = np.ones((len(state), 4), dtype=np.bool)
@@ -30,7 +30,7 @@ class ActionMasking(Enum):
                     last_action = Action[agent['action']]
                     banned_action_idx = tuple(Action).index(last_action.opposite())
                     available_actions_mask[agent_idx, banned_action_idx] = False
-        elif self == ActionMasking.FULL:
+        elif self == ActionMasking.LETHAL:
             if state[0]['observation']['step'] > 0:
                 all_goose_locs = []
                 for goose_loc_list in state[0]['observation']['geese']:

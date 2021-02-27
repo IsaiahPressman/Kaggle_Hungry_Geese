@@ -13,7 +13,7 @@ if __name__ == '__main__':
 
     obs_type = ge.ObsType.HEAD_CENTERED_OBS_SMALL
     reward_type = ge.RewardType.EVERY_STEP_LENGTH
-    action_masking = ge.ActionMasking.FULL
+    action_masking = ge.ActionMasking.LETHAL
     channel_dims = [32, 64, 128]
     first_downsample = nn.AvgPool2d(2, stride=1)
     model_kwargs = dict(conv_block_kwargs=[
