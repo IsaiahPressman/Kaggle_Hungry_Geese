@@ -1,8 +1,9 @@
 import copy
 from kaggle_environments import make as kaggle_make
-from kaggle_environments.envs.hungry_geese.hungry_geese import Action, Configuration, histogram, translate
+from kaggle_environments.envs.hungry_geese.hungry_geese import Action, Configuration, Observation, histogram, translate
 import numpy as np
 from random import sample
+from scipy import stats
 from typing import *
 
 
@@ -41,7 +42,7 @@ class LightweightEnv:
         self.step_counter = 0
         self.rewards = [0 for _ in range(self.agent_count)]
         self.steps = []
-        self._append_next_state()
+        self.generate_and_append_next_state()
 
         return self.steps[-1]
 
@@ -128,26 +129,26 @@ class LightweightEnv:
                 # Adding 1 to len(env.steps) ensures that if an agent gets reward 4507, it died on turn 45 with length 7
                 self.rewards[index] = (self.step_counter + 1) * (self.configuration.max_length + 1) + len(goose)
 
-        self._append_next_state()
+        self.generate_and_append_next_state()
         return self.steps[-1]
 
-    def _append_next_state(self) -> NoReturn:
+    def generate_and_append_next_state(self) -> NoReturn:
         state_dict_list = []
         statuses = self.get_statuses()
         for i in range(self.agent_count):
             dict_i = {
                 'action': self.last_actions[i].name,
                 'reward': self.rewards[i],
-                # 'info' is not used, and so is excluded
+                'info': {},
                 'observation': {
-                    # 'remainingOverageTime' is not computed, and so is excluded
+                    # 'remainingOverageTime' is not computed and is included only for compatibility
+                    'remainingOverageTime': 0.,
                     'index': i
                 },
                 'status': statuses[i]
             }
             if i == 0:
                 dict_i['observation'].update({
-                    # 'remainingOverageTime' is not computed, and so is excluded
                     'step': self.step_counter,
                     'geese': self.geese,
                     'food': self.food
@@ -187,6 +188,24 @@ class LightweightEnv:
     def __deepcopy__(self, memodict={}):
         return self.clone()
 
+    def canonical_string_repr(self, include_food=True) -> str:
+        if self.done:
+            raise RuntimeError('Environment has finished')
+        else:
+            canonical_string = ''
+            canonical_string += f'S: {self.step_counter} '
+            if include_food:
+                canonical_string += 'F: ' + '_'.join([str(f) for f in self.food]) + ' '
+            canonical_string += 'G: '
+            for index, goose, status in zip(range(self.agent_count), self.geese, self.get_statuses()):
+                canonical_string += f'{index}_'
+                if status == 'DONE':
+                    canonical_string += f'D '
+                else:
+                    canonical_string += '_'.join([str(g) for g in goose]) + f'_{self.last_actions[index].value} '
+
+            return canonical_string
+
     def debug_print(self, out: str):
         if self.debug:
             print(out)
@@ -202,7 +221,7 @@ class LightweightEnv:
 
         for index, goose in enumerate(self.geese):
             for position in goose:
-                board[position] = index
+                board[position] = str(index)
 
         out = row_divider
         for row in range(self.n_rows):
@@ -213,7 +232,35 @@ class LightweightEnv:
         return out
 
 
-def make(environment: str, debug: bool = False, **kwargs):
+def make(environment: str, debug: bool = False, **kwargs) -> LightweightEnv:
     assert environment == 'hungry_geese'
     config = kaggle_make(environment, debug=debug, **kwargs).configuration
     return LightweightEnv(config, debug=debug)
+
+
+def make_from_state(state: Observation,
+                    last_actions: List[Action],
+                    configuration: Optional[Configuration] = None,
+                    *args, **kwargs) -> LightweightEnv:
+    if configuration is None:
+        configuration = kaggle_make('hungry_geese').configuration
+    configuration = Configuration(configuration)
+    env = LightweightEnv(configuration, *args, **kwargs)
+
+    env.agent_count = len(state.geese)
+    env.geese = copy.deepcopy(state.geese)
+    env.food = copy.copy(state.food)
+    env.last_actions = copy.copy(last_actions)
+    env.step_counter = state.step
+
+    rewards = [0.] * len(state.geese)
+    for index, goose in enumerate(state.geese):
+        if len(goose) > 0:
+            # Adding 1 to len(env.steps) ensures that if an agent gets reward 4507, it died on turn 45 with length 7
+            rewards[index] = (state.step + 1) * (configuration.max_length + 1) + len(goose)
+    env.rewards = rewards
+
+    env.steps = [None] * state.step
+    env.generate_and_append_next_state()
+
+    return env

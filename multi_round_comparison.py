@@ -26,7 +26,7 @@ def init_worker(debug_mode):
 def get_game_result(agents):
     env = make('hungry_geese', debug=debug)
     env.run(agents)
-    return [agent['reward'] for agent in env.steps[-1]], len(env.steps)
+    return [agent['reward'] if agent['reward'] is not None else -100. for agent in env.steps[-1]], len(env.steps)
 
 
 if __name__ == '__main__':
