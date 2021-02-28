@@ -1,6 +1,7 @@
 from enum import *
 from kaggle_environments.envs.hungry_geese.hungry_geese import Action
 from kaggle_environments.envs.hungry_geese.hungry_geese import row_col as _row_col
+from numbers import Number
 import numpy as np
 from typing import *
 
@@ -76,3 +77,10 @@ def rowwise_random_choice(p: np.ndarray) -> np.ndarray:
         np.cumsum(p_norm, axis=1) > np.random.random_sample((p_norm.shape[0], 1)),
         axis=1
     )
+
+
+def print_array_one_line(arr: Union[np.ndarray, Number]) -> str:
+    if type(arr) == np.ndarray:
+        return '[' + ', '.join([print_array_one_line(a) for a in arr]) + ']'
+    else:
+        return f'{arr:.2f}'

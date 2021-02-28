@@ -142,7 +142,6 @@ class LightweightEnv:
                 'info': {},
                 'observation': {
                     # 'remainingOverageTime' is not computed and is included only for compatibility
-                    'remainingOverageTime': 0.,
                     'index': i
                 },
                 'status': statuses[i]
@@ -185,7 +184,9 @@ class LightweightEnv:
 
         return cloned_env
 
-    def __deepcopy__(self, memodict={}):
+    def __deepcopy__(self, memo=None):
+        if memo is None:
+            memo = {}
         return self.clone()
 
     def canonical_string_repr(self, include_food=True) -> str:
