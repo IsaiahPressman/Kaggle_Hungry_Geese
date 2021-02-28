@@ -16,22 +16,32 @@ with contextlib.redirect_stdout(io.StringIO()):
 os.environ['OMP_NUM_THREADS'] = '1'
 SEP = ', '
 debug = None
+save_dir = None
 
 
-def init_worker(debug_mode):
-    global debug
+def init_worker(debug_mode, save_dir_):
+    global debug, save_dir
     debug = debug_mode
+    save_dir = save_dir_
 
 
 def get_game_result(agents):
     env = make('hungry_geese', debug=debug)
     env.run(agents)
+    rendered_html = env.render(mode='html')
+    ep_length = env.steps[-1][0]['observation']['step']
+    replay_n = 0
+    while list(save_dir.glob(f'replay_{replay_n}*')):
+        replay_n += 1
+    with open(save_dir / f'replay_{replay_n}_{ep_length}_steps.html', 'w') as f:
+        f.write(rendered_html)
     return [agent['reward'] if agent['reward'] is not None else -100. for agent in env.steps[-1]], len(env.steps)
 
 
 if __name__ == '__main__':
     start_time = time.time()
-    
+
+    default_save_dir = Path(Path(__file__).parent) / 'replays'
     parser = argparse.ArgumentParser(description='Compare multiple agents in an asynchronous multi-game match.')
     parser.add_argument(
         'agent_paths',
@@ -53,6 +63,13 @@ if __name__ == '__main__':
         help=f'The number of games to play. Default: {(multiprocessing.cpu_count()-1)*2}'
     )
     parser.add_argument(
+        '-s',
+        '--save_dir',
+        type=Path,
+        default=default_save_dir,
+        help=f'Where to save replays. Default: {default_save_dir}'
+    )
+    parser.add_argument(
         '-w',
         '--n_workers',
         type=int,
@@ -60,6 +77,16 @@ if __name__ == '__main__':
         help=f'The number of worker processes to use. Default: {multiprocessing.cpu_count()-1}'
     )
     args = parser.parse_args()
+
+    save_dir = args.save_dir
+    save_dir.mkdir(exist_ok=True)
+    subfolder_idx = 0
+    subfolder = save_dir / str(subfolder_idx)
+    while subfolder.is_dir() and os.listdir(subfolder):
+        subfolder_idx += 1
+        subfolder = save_dir / str(subfolder_idx)
+    save_dir = save_dir / str(subfolder_idx)
+    save_dir.mkdir(exist_ok=True)
 
     if len(args.agent_paths) == 1:
         agent_paths = args.agent_paths * 4
@@ -75,7 +102,7 @@ if __name__ == '__main__':
     
     if args.n_workers == 1:
         results_and_game_lengths = []
-        init_worker(args.debug)
+        init_worker(args.debug, args.save_dir)
         for i in tqdm.trange(args.n_games):
             results_and_game_lengths.append(get_game_result(agent_paths))
     else:
@@ -85,7 +112,7 @@ if __name__ == '__main__':
         with multiprocessing.Pool(
                 processes=args.n_workers,
                 initializer=init_worker,
-                initargs=(args.debug,)
+                initargs=(args.debug, save_dir)
         ) as pool:
             results_and_game_lengths = list(tqdm.tqdm(pool.imap(get_game_result, agent_paths_broadcasted),
                                                       total=args.n_games))
