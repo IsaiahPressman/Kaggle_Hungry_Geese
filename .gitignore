@@ -5,8 +5,7 @@ __pycache__/
 
 .ipynb_checkpoints/
 /runs
-/episode_scraping/data
-/episode_scraping/metadata
+/episode_scraping
 /replays
 /rl_agents
 .directory
