@@ -47,7 +47,7 @@ class Node:
             values = values[:, np.newaxis]
         if values.shape != (self.n_geese, 1):
             raise RuntimeError(f'Values should be of shape {(self.n_geese, 1)}, got {values.shape}')
-        if not np.isclose(values.sum(), 0.):
+        if not np.isclose(values.sum(), 0., atol=1e-4):
             raise RuntimeError(f'Values should sum to 0, got {values.ravel()} which sums to {values.sum()}')
         if (values.ravel()[self.geese_still_playing].min(initial=float('inf')) <=
                 values.ravel()[~self.geese_still_playing].max(initial=float('-inf'))):

@@ -106,6 +106,7 @@ class SupervisedLearning:
                 combined_loss = policy_loss + value_loss
                 combined_loss.backward()
                 self.optimizer.step()
+                self.lr_scheduler.step()
 
                 train_metrics['policy_loss'].append(policy_loss.detach().cpu().item())
                 train_metrics['value_loss'].append(value_loss.detach().cpu().item())
@@ -154,7 +155,6 @@ class SupervisedLearning:
             self.log_test(test_metrics)
             if self.epoch_counter % self.checkpoint_freq == 0 and self.epoch_counter > 0:
                 self.checkpoint()
-            self.lr_scheduler.step()
             self.summary_writer.add_scalar('Time/epoch_time_minutes',
                                            (time.time() - epoch_start_time) / 60.,
                                            self.epoch_counter)

@@ -18,14 +18,13 @@ if __name__ == '__main__':
     DEVICE = torch.device('cuda')
 
     obs_type = ge.ObsType.COMBINED_GRADIENT_OBS
-    channel_dims = [32, 64, 128]
-    first_downsample = nn.AvgPool2d(2, stride=1)
+    channel_dims = [64, 128]
     model_kwargs = dict(
         conv_block_kwargs=[
             dict(
                 in_channels=obs_type.get_obs_spec()[-3],
                 out_channels=channel_dims[0],
-                kernel_size=3,
+                kernel_size=5,
                 normalize=False
             ),
             dict(
@@ -34,12 +33,6 @@ if __name__ == '__main__':
                 kernel_size=3,
                 normalize=False
             ),
-            dict(
-                in_channels=channel_dims[1],
-                out_channels=channel_dims[2],
-                kernel_size=3,
-                normalize=False
-            )
         ],
         cross_normalize_value=True,
     )
@@ -59,11 +52,11 @@ if __name__ == '__main__':
         momentum=0.9,
         weight_decay=1e-4
     )
-    # NB: lr_scheduler counts steps in epochs, not batches
+    # NB: lr_scheduler counts steps in batches, not epochs
     lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(
         optimizer,
         # Stop reducing LR beyond 1e-5
-        milestones=[20*i for i in range(2, 5)],
+        milestones=[200000*i for i in range(2, 5)],
         gamma=0.1
     )
 
@@ -91,7 +84,7 @@ if __name__ == '__main__':
     dataloader_kwargs = dict(
         batch_size=512,
         shuffle=True,
-        num_workers=6,
+        num_workers=12,
         pin_memory=True
     )
     train_dataloader = DataLoader(train_dataset, **dataloader_kwargs)
