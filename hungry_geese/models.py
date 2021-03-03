@@ -158,32 +158,46 @@ class FullConvActorCriticNetwork(nn.Module):
     def __init__(
             self,
             conv_block_kwargs: Sequence[Dict],
+            cross_normalize_value: bool = True,
             value_activation: Optional[nn.Module] = None,
             value_scale: float = 1.,
-            value_shift: float = 0.
+            value_shift: float = 0.,
     ):
         super(FullConvActorCriticNetwork, self).__init__()
         self.base = ResidualModel(conv_block_kwargs)
         self.base_out_channels = conv_block_kwargs[-1]['out_channels']
         self.actor = nn.Linear(self.base_out_channels, 4)
         self.critic = nn.Linear(self.base_out_channels, 1)
-        self.value_activation = nn.Identity() if value_activation is None else value_activation
-        self.value_scale = value_scale
-        self.value_shift = value_shift
+        self.cross_normalize_value = cross_normalize_value
+        if self.cross_normalize_value:
+            if value_activation is not None:
+                print('WARNING: Setting value_activation has no effect while cross_normalize_value is True')
+            if value_scale != 1.:
+                print('WARNING: Setting value_scale has no effect while cross_normalize_value is True')
+            if value_shift != 0.:
+                print('WARNING: Setting value_shift has no effect while cross_normalize_value is True')
+            self.value_activation = None
+            self.value_scale = None
+            self.value_shift = None
+        else:
+            self.value_activation = nn.Identity() if value_activation is None else value_activation
+            self.value_scale = value_scale
+            self.value_shift = value_shift
 
     def forward(self,
                 states: torch.Tensor,
-                head_locs: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+                head_locs: torch.Tensor,
+                still_alive: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         @param states: Tensor of shape (batch_size, n_channels, n_rows, n_cols) representing the board
         @param head_locs: Tensor of shape (batch_size, n_geese), containing the integer index locations of the goose
             heads whose actions/values should be returned
+        @param still_alive: Booleran tensor of shape (batch_size, n_geese), where True values indicate which geese are
+            still alive and taking actions
         @return (policy, value):
              policy_logits: Tensor of shape (batch_size, n_geese, 4), representing the action distribution per goose
              value: Tensor of shape (batch_size, n_geese), representing the predicted value per goose
         """
-        assert states.shape[0] == head_locs.shape[0]
-        assert len(head_locs.shape) == 2
         batch_size, n_geese = head_locs.shape
         base_out = self.base(states)
         if base_out.shape[-2:] != states.shape[-2:]:
@@ -193,24 +207,62 @@ class FullConvActorCriticNetwork(nn.Module):
         # Then, swap axes so that channels are last (batch_size, n_rows * n_cols, n_channels)
         base_out = base_out.reshape(base_out.shape[0], self.base_out_channels, -1).transpose(-2, -1)
         batch_indices = torch.arange(batch_size).repeat_interleave(n_geese)
-        head_indices = head_locs.view(-1)
+        head_indices = torch.where(
+            still_alive,
+            head_locs,
+            torch.zeros_like(head_locs)
+        ).view(-1)
         # Base_out_indexed (before .view()) is a tensor of shape (batch_size * n_geese, n_channels)
         # After .view(), base_out_indexed has shape (batch_size, n_geese, n_channels)
         base_out_indexed = base_out[batch_indices, head_indices].view(batch_size, n_geese, -1)
-        logits = self.actor(base_out_indexed)
-        values = self.critic(base_out_indexed).squeeze(dim=-1)
-        return logits, self.value_activation(values) * self.value_scale + self.value_shift
+        actor_out = self.actor(base_out_indexed)
+        critic_out = self.critic(base_out_indexed).squeeze(dim=-1)
+        logits = torch.where(
+            still_alive.unsqueeze(-1),
+            actor_out,
+            torch.zeros_like(actor_out)
+        )
+        values = torch.where(
+            still_alive,
+            critic_out,
+            torch.zeros_like(critic_out)
+        )
+        if self.cross_normalize_value:
+            if n_geese != 4.:
+                raise RuntimeError('cross_normalize_value still needs to be implemented for n_geese != 4')
+            values.masked_fill_(~still_alive, float('-inf'))
+            win_probs = torch.softmax(values, dim=-1)
+            remaining_rewards = torch.linspace(0., 1., n_geese, dtype=states.dtype, device=states.device)
+            remaining_rewards_min = remaining_rewards[-still_alive.sum(dim=-1)].unsqueeze(-1)
+            remaining_rewards_var = 1. - remaining_rewards_min
+            values = remaining_rewards_min + win_probs * remaining_rewards_var
+            # TODO: This is a hacky solution - there should be a more elegant way to do this for any n_geese_remaining?
+            values = torch.where(
+                still_alive.sum(dim=-1, keepdim=True) == 4,
+                values * 2.,
+                values
+            )
+            values = torch.where(
+                still_alive.sum(dim=-1, keepdim=True) == 3,
+                values * 1.2,
+                values
+            )
+            # Finally rescale values from the range [0., 1] to the range [-1., 1]
+            return logits, 2. * values - 1.
+        else:
+            return logits, self.value_activation(values) * self.value_scale + self.value_shift
 
     def sample_action(self,
                       states: torch.Tensor,
                       head_locs: torch.Tensor,
+                      still_alive: torch.Tensor,
                       available_actions_mask: Optional[torch.Tensor] = None,
                       train: bool = False):
         if train:
-            logits, values = self.forward(states, head_locs)
+            logits, values = self.forward(states, head_locs, still_alive)
         else:
             with torch.no_grad():
-                logits, values = self.forward(states, head_locs)
+                logits, values = self.forward(states, head_locs, still_alive)
         if available_actions_mask is not None:
             logits.masked_fill_(~available_actions_mask, float('-inf'))
         # In case all actions are masked, select one at random
@@ -229,9 +281,10 @@ class FullConvActorCriticNetwork(nn.Module):
     def choose_best_action(self,
                            states: torch.Tensor,
                            head_locs: torch.Tensor,
+                           still_alive: torch.Tensor,
                            available_actions_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
         with torch.no_grad():
-            logits, _ = self.forward(states, head_locs)
+            logits, _ = self.forward(states, head_locs, still_alive)
             if available_actions_mask is not None:
                 logits.masked_fill_(~available_actions_mask, float('-inf'))
             return logits.argmax(dim=-1)

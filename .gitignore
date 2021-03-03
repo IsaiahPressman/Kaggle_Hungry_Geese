@@ -8,5 +8,6 @@ __pycache__/
 /episode_scraping
 /replays
 /rl_agents
+/sl_agents
 .directory
 .idea/

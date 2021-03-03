@@ -1,4 +1,5 @@
 from enum import *
+import json
 from kaggle_environments.envs.hungry_geese.hungry_geese import Action
 from kaggle_environments.envs.hungry_geese.hungry_geese import row_col as _row_col
 from numbers import Number
@@ -84,3 +85,22 @@ def print_array_one_line(arr: Union[np.ndarray, Number]) -> str:
         return '[' + ', '.join([print_array_one_line(a) for a in arr]) + ']'
     else:
         return f'{arr:.2f}'
+
+
+def read_json(file_path):
+    with open(file_path, 'r') as f:
+        return json.load(f)
+
+
+def format_experiment_name(obs_type,
+                           reward_type,
+                           action_masking,
+                           channel_dims: Sequence[int],
+                           conv_block_kwargs: Sequence[Dict]):
+    experiment_name = ''
+    experiment_name += f'{obs_type.name.lower()}_'
+    experiment_name += f'{reward_type.name.lower()}_'
+    experiment_name += f'{action_masking.name.lower()}_'
+    experiment_name += f'{len(conv_block_kwargs)}_blocks_'
+    experiment_name += '_'.join([str(c) for c in channel_dims]) + '_dims'
+    return experiment_name

@@ -195,3 +195,95 @@ def flip_a_batch(a_batch, flipped_rows_or_cols):
     else:
         raise ValueError(f'Unrecognized flipped_rows_or_cols value: {flipped_rows_or_cols}')
     return flipped_a_batch
+
+
+class AlphaZeroReplayBuffer:
+    """
+    A replay buffer that stores (state, policy, result, head_loc, still_alive) tuples
+    state: Tensor of shape (n_channels, n_rows, n_cols)
+    policy: Tensor of shape (n_geese, 4) representing the post-MCTS policy
+    result: Tensor of shape (n_geese,) representing the final reward of that goose
+    head_loc: Tensor of shape (n_geese,) representing the integer indices of the head locations of the living geese
+        NB: Dead geese masks are stored by setting head_loc to -1
+    dead_mask: Boolean tensor of shape (n_geese,) representing which geese are no longer playing
+    """
+    def __init__(self,
+                 s_shape: Tuple[int, ...],
+                 max_len: Union[int, float] = 1e6,
+                 starting_s_p_r_h_d: Optional[Tuple[torch.Tensor, ...]] = None):
+        self.max_len = int(max_len)
+        n_geese = self._p_buffer[1]
+        self._s_buffer = torch.zeros(self.max_len, *s_shape)
+        self._p_buffer = torch.zeros(self.max_len, n_geese, 4)
+        self._r_buffer = torch.zeros(self.max_len, n_geese)
+        self._h_buffer = torch.zeros(self.max_len, n_geese)
+        self.current_size = 0
+        self._top = 0
+        if starting_s_p_r_h_d is not None:
+            self.append_samples_batch(*starting_s_p_r_h_d)
+            # Randomly shuffle initial experiences
+            shuffled_idxs = np.arange(self.current_size)
+            np.random.shuffle(shuffled_idxs)
+            shuffled_idxs = np.append(shuffled_idxs, np.arange(self.current_size, self.max_len))
+            self._s_buffer = self._s_buffer[torch.from_numpy(shuffled_idxs)]
+            self._p_buffer = self._p_buffer[torch.from_numpy(shuffled_idxs)]
+            self._r_buffer = self._r_buffer[torch.from_numpy(shuffled_idxs)]
+            self._h_buffer = self._h_buffer[torch.from_numpy(shuffled_idxs)]
+
+    def get_samples_batch(self, sample_size: int):
+        # Sampling with replacement
+        idxs = torch.randint(self.current_size, size=(sample_size,))
+        # Sampling without replacement is possible, but quite a bit slower:
+        # idxs = np.random.choice(self.current_size, size=sample_size, replace=(self.current_size < sample_size))
+        h_batch = self._h_buffer[idxs].clone()
+        d_batch = h_batch < 0
+        return (self._s_buffer[idxs].clone(),
+                self._p_buffer[idxs].clone(),
+                self._r_buffer[idxs].clone(),
+                h_batch,
+                d_batch)
+
+    def append_samples_batch(self,
+                             s_batch: torch.Tensor,
+                             p_batch: torch.Tensor,
+                             r_batch: torch.Tensor,
+                             h_batch: torch.Tensor,
+                             d_batch: torch.Tensor):
+        batch_len = s_batch.shape[0]
+        assert p_batch.shape[0] == batch_len
+        assert r_batch.shape[0] == batch_len
+        assert h_batch.shape[0] == batch_len
+        assert d_batch.shape[0] == batch_len
+        new_len = self._top + batch_len
+        if new_len <= self.max_len:
+            h_batch = torch.where(
+                d_batch,
+                -100,
+                h_batch
+            )
+            self._s_buffer[self._top:new_len] = s_batch
+            self._p_buffer[self._top:new_len] = p_batch
+            self._r_buffer[self._top:new_len] = r_batch
+            self._h_buffer[self._top:new_len] = h_batch
+            self._top = new_len % self.max_len
+            self.current_size = max(new_len, self.current_size)
+        else:
+            leftover_batch = new_len % self.max_len
+            s_batch_split = s_batch.split((batch_len - leftover_batch, leftover_batch))
+            p_batch_split = p_batch.split((batch_len - leftover_batch, leftover_batch))
+            r_batch_split = r_batch.split((batch_len - leftover_batch, leftover_batch))
+            h_batch_split = h_batch.split((batch_len - leftover_batch, leftover_batch))
+            d_batch_split = d_batch.split((batch_len - leftover_batch, leftover_batch))
+            self.append_samples_batch(s_batch_split[0],
+                                      p_batch_split[0],
+                                      r_batch_split[0],
+                                      h_batch_split[0],
+                                      d_batch_split[0])
+            self.append_samples_batch(s_batch_split[1],
+                                      p_batch_split[1],
+                                      r_batch_split[1],
+                                      h_batch_split[1],
+                                      d_batch_split[1])
+
+    def __len__(self):
+        return self.current_size
