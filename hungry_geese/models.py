@@ -12,6 +12,7 @@ class ConvolutionalBlock(nn.Module):
             kernel_size: int,
             dilation: int = 1,
             n_layers: int = 2,
+            normalize: bool = True,
             activation_func: nn.Module = nn.ReLU(),
             downsample: nn.Module = nn.Identity()):
         super(ConvolutionalBlock, self).__init__()
@@ -24,17 +25,17 @@ class ConvolutionalBlock(nn.Module):
         if downsample is None:
             downsample = nn.Identity()
 
-        layers = [
-            nn.Conv2d(
-                in_channels=in_channels,
-                out_channels=out_channels,
-                kernel_size=kernel_size,
-                padding=padding,
-                padding_mode='circular'
-            ),
-            nn.BatchNorm2d(out_channels),
-            activation_func
-        ]
+        layers = [nn.Conv2d(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            kernel_size=kernel_size,
+            padding=padding,
+            padding_mode='circular'
+        )]
+        if normalize:
+            layers.append(nn.BatchNorm2d(out_channels))
+        layers.append(activation_func)
+
         for i in range(n_layers - 1):
             layers.append(nn.Conv2d(
                 in_channels=out_channels,
@@ -43,7 +44,8 @@ class ConvolutionalBlock(nn.Module):
                 padding=padding,
                 padding_mode='circular'
             ))
-            layers.append(nn.BatchNorm2d(out_channels))
+            if normalize:
+                layers.append(nn.BatchNorm2d(out_channels))
             layers.append(activation_func)
         # Remove final activation layer - to be applied after residual connection
         layers = layers[:-1]
@@ -147,6 +149,89 @@ class BasicActorCriticNetwork(nn.Module):
                            available_actions_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
         with torch.no_grad():
             logits, _ = self.forward(states)
+            if available_actions_mask is not None:
+                logits.masked_fill_(~available_actions_mask, float('-inf'))
+            return logits.argmax(dim=-1)
+
+
+class FullConvActorCriticNetwork(nn.Module):
+    def __init__(
+            self,
+            conv_block_kwargs: Sequence[Dict],
+            value_activation: Optional[nn.Module] = None,
+            value_scale: float = 1.,
+            value_shift: float = 0.
+    ):
+        super(FullConvActorCriticNetwork, self).__init__()
+        self.base = ResidualModel(conv_block_kwargs)
+        self.base_out_channels = conv_block_kwargs[-1]['out_channels']
+        self.actor = nn.Linear(self.base_out_channels, 4)
+        self.critic = nn.Linear(self.base_out_channels, 1)
+        self.value_activation = nn.Identity() if value_activation is None else value_activation
+        self.value_scale = value_scale
+        self.value_shift = value_shift
+
+    def forward(self,
+                states: torch.Tensor,
+                head_locs: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        @param states: Tensor of shape (batch_size, n_channels, n_rows, n_cols) representing the board
+        @param head_locs: Tensor of shape (batch_size, n_geese), containing the integer index locations of the goose
+            heads whose actions/values should be returned
+        @return (policy, value):
+             policy_logits: Tensor of shape (batch_size, n_geese, 4), representing the action distribution per goose
+             value: Tensor of shape (batch_size, n_geese), representing the predicted value per goose
+        """
+        assert states.shape[0] == head_locs.shape[0]
+        assert len(head_locs.shape) == 2
+        batch_size, n_geese = head_locs.shape
+        base_out = self.base(states)
+        if base_out.shape[-2:] != states.shape[-2:]:
+            raise RuntimeError(f'Fully convolutional networks must use padding so that the input and output sizes match'
+                               f'Got input size: {states.shape} and output size: {base_out.shape}')
+        # Reshape to tensor of shape (batch_size, n_channels, n_rows * n_cols)
+        # Then, swap axes so that channels are last (batch_size, n_rows * n_cols, n_channels)
+        base_out = base_out.reshape(base_out.shape[0], self.base_out_channels, -1).transpose(-2, -1)
+        batch_indices = torch.arange(batch_size).repeat_interleave(n_geese)
+        head_indices = head_locs.view(-1)
+        # Base_out_indexed (before .view()) is a tensor of shape (batch_size * n_geese, n_channels)
+        # After .view(), base_out_indexed has shape (batch_size, n_geese, n_channels)
+        base_out_indexed = base_out[batch_indices, head_indices].view(batch_size, n_geese, -1)
+        logits = self.actor(base_out_indexed)
+        values = self.critic(base_out_indexed).squeeze(dim=-1)
+        return logits, self.value_activation(values) * self.value_scale + self.value_shift
+
+    def sample_action(self,
+                      states: torch.Tensor,
+                      head_locs: torch.Tensor,
+                      available_actions_mask: Optional[torch.Tensor] = None,
+                      train: bool = False):
+        if train:
+            logits, values = self.forward(states, head_locs)
+        else:
+            with torch.no_grad():
+                logits, values = self.forward(states, head_locs)
+        if available_actions_mask is not None:
+            logits.masked_fill_(~available_actions_mask, float('-inf'))
+        # In case all actions are masked, select one at random
+        probs = F.softmax(torch.where(
+            logits.isneginf().all(axis=-1, keepdim=True),
+            torch.zeros_like(logits),
+            logits
+        ), dim=-1)
+        m = distributions.Categorical(probs)
+        sampled_actions = m.sample()
+        if train:
+            return sampled_actions, (logits, values)
+        else:
+            return sampled_actions
+
+    def choose_best_action(self,
+                           states: torch.Tensor,
+                           head_locs: torch.Tensor,
+                           available_actions_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+        with torch.no_grad():
+            logits, _ = self.forward(states, head_locs)
             if available_actions_mask is not None:
                 logits.masked_fill_(~available_actions_mask, float('-inf'))
             return logits.argmax(dim=-1)

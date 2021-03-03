@@ -493,7 +493,7 @@ class BasicMCTS:
             full_state = env.state
             policy_est, value_est = self.actor_critic_func(full_state)
             self.nodes[s] = Node(
-                [status != 'DONE' for status in env.get_statuses()],
+                [status == 'ACTIVE' for status in env.get_statuses()],
                 self.action_mask_func(full_state),
                 policy_est
             )
