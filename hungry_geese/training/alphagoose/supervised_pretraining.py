@@ -14,8 +14,8 @@ from tqdm import tqdm
 from typing import *
 import warnings
 
-from ..models import FullConvActorCriticNetwork
-from ..env import goose_env as ge
+from hungry_geese.models import FullConvActorCriticNetwork
+from hungry_geese.env import goose_env as ge
 
 
 class SupervisedLearning:

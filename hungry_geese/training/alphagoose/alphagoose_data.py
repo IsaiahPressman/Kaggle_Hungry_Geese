@@ -6,8 +6,8 @@ import torch
 from torch.utils.data import Dataset
 from typing import *
 
-from ..env.goose_env import ObsType, create_obs_tensor
-from ..utils import read_json
+from hungry_geese.env.goose_env import ObsType, create_obs_tensor
+from hungry_geese.utils import read_json
 
 
 class AlphaGooseDataset(Dataset):

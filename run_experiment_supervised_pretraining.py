@@ -3,22 +3,20 @@ from pathlib import Path
 import shutil
 from sklearn.model_selection import train_test_split
 import torch
-from torch import nn
 from torch.utils.data import DataLoader
 from torchvision import transforms
 
-import hungry_geese
 from hungry_geese import models
 import hungry_geese.env.goose_env as ge
-from hungry_geese.sl.alphagoose_data import AlphaGooseDataset, RandomReflect, ToTensor
-from hungry_geese.sl.supervised_learning import SupervisedLearning
+from hungry_geese.training.alphagoose.alphagoose_data import AlphaGooseDataset, RandomReflect, ToTensor
+from hungry_geese.training.alphagoose.supervised_pretraining import SupervisedPretraining
 from hungry_geese.utils import format_experiment_name
 
 if __name__ == '__main__':
     DEVICE = torch.device('cuda')
 
     obs_type = ge.ObsType.COMBINED_GRADIENT_OBS
-    channel_dims = [64, 128]
+    channel_dims = [128, 64, 32]
     model_kwargs = dict(
         conv_block_kwargs=[
             dict(
@@ -30,11 +28,18 @@ if __name__ == '__main__':
             dict(
                 in_channels=channel_dims[0],
                 out_channels=channel_dims[1],
-                kernel_size=3,
+                kernel_size=5,
                 normalize=False
             ),
+            dict(
+                in_channels=channel_dims[1],
+                out_channels=channel_dims[2],
+                kernel_size=5,
+                normalize=False
+            )
         ],
         cross_normalize_value=True,
+        # **ge.RewardType.RANK_ON_DEATH.get_recommended_value_activation_scale_shift_dict()
     )
     model = models.FullConvActorCriticNetwork(**model_kwargs)
     """
@@ -56,7 +61,7 @@ if __name__ == '__main__':
     lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(
         optimizer,
         # Stop reducing LR beyond 1e-5
-        milestones=[200000*i for i in range(2, 5)],
+        milestones=[150000*i for i in range(2, 5)],
         gamma=0.1
     )
 
@@ -84,7 +89,7 @@ if __name__ == '__main__':
     dataloader_kwargs = dict(
         batch_size=512,
         shuffle=True,
-        num_workers=12,
+        num_workers=8,
         pin_memory=True
     )
     train_dataloader = DataLoader(train_dataset, **dataloader_kwargs)
@@ -94,9 +99,9 @@ if __name__ == '__main__':
                                                                       ge.RewardType.RANK_ON_DEATH,
                                                                       ge.ActionMasking.NONE,
                                                                       channel_dims,
-                                                                      model_kwargs['conv_block_kwargs']) + '_v1'
+                                                                      model_kwargs['conv_block_kwargs']) + '_v2'
     exp_folder = Path(f'runs/supervised_learning/{experiment_name}')
-    train_alg = SupervisedLearning(
+    train_alg = SupervisedPretraining(
         model=model,
         optimizer=optimizer,
         lr_scheduler=lr_scheduler,
