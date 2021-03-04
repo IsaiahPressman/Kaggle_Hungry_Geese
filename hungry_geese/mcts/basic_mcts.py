@@ -11,7 +11,8 @@ class Node:
             self,
             geese_still_playing_mask: Sequence[bool],
             available_actions_masks: Optional[np.ndarray],
-            initial_policies: Optional[np.ndarray]
+            initial_policies: np.ndarray,
+            initial_values: np.ndarray
     ):
         self.geese_still_playing = np.array(geese_still_playing_mask)
         self.n_geese = len(self.geese_still_playing)
@@ -36,6 +37,12 @@ class Node:
                 self.initial_policies
             )
         self.initial_policies = self.initial_policies / self.initial_policies.sum(axis=1, keepdims=True)
+        # Initial values are stored for logging purposes only
+        if initial_values.ndim == 1:
+            initial_values = initial_values[:, np.newaxis]
+        if initial_values.shape != (self.n_geese, 1):
+            raise RuntimeError(f'Initial_values should be of shape {(self.n_geese, 1)}, got {initial_values.shape}')
+        self.initial_values = initial_values
 
         self.q_vals = np.zeros_like(self.initial_policies)
         self.n_visits = np.zeros_like(self.initial_policies)
@@ -146,7 +153,8 @@ class BasicMCTS:
             self.nodes[s] = Node(
                 [status == 'ACTIVE' for status in env.get_statuses()],
                 self.action_mask_func(full_state),
-                policy_est
+                policy_est,
+                value_est
             )
             return value_est
 
