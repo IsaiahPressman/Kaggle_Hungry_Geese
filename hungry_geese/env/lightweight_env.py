@@ -163,7 +163,7 @@ class LightweightEnv:
     @property
     def done(self) -> bool:
         n_geese_alive = len([True for goose in self.geese if len(goose) > 0])
-        return n_geese_alive <= 1
+        return n_geese_alive <= 1 or self.step_counter >= self.configuration.episode_steps - 1
 
     def get_statuses(self) -> List[str]:
         if self.done:
