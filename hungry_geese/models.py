@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from typing import *
 
 
-class ConvolutionalBlock(nn.Module):
+class BasicConvolutionalBlock(nn.Module):
     def __init__(
             self,
             in_channels: int,
@@ -13,9 +13,9 @@ class ConvolutionalBlock(nn.Module):
             dilation: int = 1,
             n_layers: int = 2,
             normalize: bool = True,
-            activation_func: nn.Module = nn.ReLU(),
+            activation: Callable = nn.ReLU,
             downsample: nn.Module = nn.Identity()):
-        super(ConvolutionalBlock, self).__init__()
+        super(BasicConvolutionalBlock, self).__init__()
         assert n_layers >= 1
         padding = (dilation * (kernel_size - 1.)) / 2.
         if padding == int(padding):
@@ -30,11 +30,12 @@ class ConvolutionalBlock(nn.Module):
             out_channels=out_channels,
             kernel_size=kernel_size,
             padding=padding,
+            dilation=dilation,
             padding_mode='circular'
         )]
         if normalize:
             layers.append(nn.BatchNorm2d(out_channels))
-        layers.append(activation_func)
+        layers.append(activation(inplace=True))
 
         for i in range(n_layers - 1):
             layers.append(nn.Conv2d(
@@ -42,11 +43,12 @@ class ConvolutionalBlock(nn.Module):
                 out_channels=out_channels,
                 kernel_size=kernel_size,
                 padding=padding,
+                dilation=dilation,
                 padding_mode='circular'
             ))
             if normalize:
                 layers.append(nn.BatchNorm2d(out_channels))
-            layers.append(activation_func)
+            layers.append(activation(inplace=True))
         # Remove final activation layer - to be applied after residual connection
         layers = layers[:-1]
         layers.append(downsample)
@@ -56,29 +58,88 @@ class ConvolutionalBlock(nn.Module):
         return self.layers(x)
 
 
+class InvertedResidualBlock(nn.Module):
+    def __init__(
+            self,
+            in_channels: int,
+            out_channels: int,
+            kernel_size: int,
+            expansion_factor: int = 6,
+            dilation: int = 1,
+            normalize: bool = True,
+            activation: Callable = nn.ReLU,
+            downsample: nn.Module = nn.Identity()):
+        super(InvertedResidualBlock, self).__init__()
+        padding = (dilation * (kernel_size - 1.)) / 2.
+        if padding == int(padding):
+            padding = int(padding)
+        else:
+            raise ValueError(f'Padding must be an integer, but was {padding:0.2f}')
+        if downsample is None:
+            downsample = nn.Identity()
+        mid_channels = in_channels * expansion_factor
+
+        self.expansion = nn.Conv2d(
+            in_channels=in_channels,
+            out_channels=mid_channels,
+            kernel_size=1,
+        )
+        self.expansion_norm = nn.BatchNorm2d(mid_channels) if normalize else nn.Identity()
+        self.expansion_act = activation(inplace=True)
+
+        self.depthwise_conv = nn.Conv2d(
+            in_channels=mid_channels,
+            out_channels=mid_channels,
+            kernel_size=kernel_size,
+            padding=padding,
+            dilation=dilation,
+            groups=mid_channels,
+            padding_mode='circular'
+        )
+        self.depthwise_conv_norm = nn.BatchNorm2d(mid_channels) if normalize else nn.Identity()
+        self.depthwise_conv_act = activation(inplace=True)
+
+        self.projection_conv = nn.Conv2d(
+            in_channels=mid_channels,
+            out_channels=out_channels,
+            kernel_size=1,
+        )
+        self.projection_norm = nn.BatchNorm2d(mid_channels) if normalize else nn.Identity()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        expanded = self.expansion_norm(self.expansion_act(self.expansion(x)))
+        convolved = self.depthwise_conv_norm(self.depthwise_conv_act(self.depthwise_conv(expanded)))
+        projected = self.projection_norm(self.projection_conv(convolved))
+        return projected
+
+
 class ResidualModel(nn.Module):
-    def __init__(self, conv_block_kwargs: Sequence[Dict]):
+    def __init__(
+            self,
+            block_class: Union[BasicConvolutionalBlock, InvertedResidualBlock],
+            conv_block_kwargs: Sequence[Dict]
+    ):
         super(ResidualModel, self).__init__()
         assert len(conv_block_kwargs) >= 1
         self.conv_blocks = nn.ModuleList()
         self.change_n_channels = nn.ModuleList()
         self.downsamplers = nn.ModuleList()
-        self.activation_funcs = nn.ModuleList()
+        self.activations = nn.ModuleList()
         for kwargs in conv_block_kwargs:
-            self.conv_blocks.append(ConvolutionalBlock(**kwargs))
+            self.conv_blocks.append(block_class(**kwargs))
             if kwargs['in_channels'] != kwargs['out_channels']:
                 self.change_n_channels.append(nn.Conv2d(kwargs['in_channels'], kwargs['out_channels'], 1))
             else:
                 self.change_n_channels.append(nn.Identity())
             self.downsamplers.append(kwargs.get('downsample', nn.Identity()))
-            self.activation_funcs.append(kwargs.get('activation_func', nn.ReLU()))
+            self.activations.append(kwargs.get('activation', nn.ReLU)(inplace=True))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         for cb, cnc, d, a in zip(
                 self.conv_blocks,
                 self.change_n_channels,
                 self.downsamplers,
-                self.activation_funcs
+                self.activations
         ):
             identity = x
             x = cb(x)
@@ -157,15 +218,15 @@ class BasicActorCriticNetwork(nn.Module):
 class FullConvActorCriticNetwork(nn.Module):
     def __init__(
             self,
-            conv_block_kwargs: Sequence[Dict],
             cross_normalize_value: bool = True,
             value_activation: Optional[nn.Module] = None,
             value_scale: float = 1.,
             value_shift: float = 0.,
+            **residual_model_kwargs
     ):
         super(FullConvActorCriticNetwork, self).__init__()
-        self.base = ResidualModel(conv_block_kwargs)
-        self.base_out_channels = conv_block_kwargs[-1]['out_channels']
+        self.base = ResidualModel(**residual_model_kwargs)
+        self.base_out_channels = residual_model_kwargs['conv_block_kwargs'][-1]['out_channels']
         self.actor = nn.Linear(self.base_out_channels, 4)
         self.critic = nn.Linear(self.base_out_channels, 1)
         self.cross_normalize_value = cross_normalize_value

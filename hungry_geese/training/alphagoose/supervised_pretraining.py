@@ -7,6 +7,7 @@ import shutil
 import time
 import torch
 import torch.nn.functional as F
+from torch.cuda import amp
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from torch.jit import TracerWarning
@@ -18,7 +19,7 @@ from hungry_geese.models import FullConvActorCriticNetwork
 from hungry_geese.env import goose_env as ge
 
 
-class SupervisedLearning:
+class SupervisedPretraining:
     def __init__(
             self,
             model: FullConvActorCriticNetwork,
@@ -27,7 +28,9 @@ class SupervisedLearning:
             train_dataloader: DataLoader,
             test_dataloader: DataLoader,
             device: torch.device = torch.device('cuda'),
-            exp_folder: Path = Path('runs/supervised_learning/TEMP'),
+            use_mixed_precision: bool = True,
+            grad_scaler: amp.grad_scaler = amp.GradScaler(),
+            exp_folder: Path = Path('runs/supervised_pretraining/TEMP'),
             checkpoint_freq: int = 10,
             checkpoint_render_n_games: int = 10
     ):
@@ -38,6 +41,8 @@ class SupervisedLearning:
         self.train_dataloader = train_dataloader
         self.test_dataloader = test_dataloader
         self.device = device
+        self.use_mixed_precision = use_mixed_precision
+        self.grad_scaler = grad_scaler
         self.exp_folder = exp_folder.absolute()
         if self.exp_folder.name == 'TEMP':
             print('WARNING: Using TEMP exp_folder')
@@ -93,19 +98,25 @@ class SupervisedLearning:
                 still_alive = still_alive.to(device=self.device)
 
                 self.optimizer.zero_grad()
-                logits, value = self.model(state, head_locs, still_alive)
+                with amp.autocast(enabled=self.use_mixed_precision):
+                    logits, value = self.model(state, head_locs, still_alive)
 
-                logits = logits.view(-1, 4)
-                action = action.view(-1)
-                policy_loss = F.cross_entropy(logits, action, ignore_index=-1)
+                    logits = logits.view(-1, 4)
+                    action = action.view(-1)
+                    policy_loss = F.cross_entropy(logits, action, ignore_index=-1)
 
-                value_masked = value.view(-1)[still_alive.view(-1)]
-                result_masked = result.view(-1)[still_alive.view(-1)]
-                value_loss = F.mse_loss(value_masked, result_masked)
+                    value_masked = value.view(-1)[still_alive.view(-1)]
+                    result_masked = result.view(-1)[still_alive.view(-1)]
+                    value_loss = F.mse_loss(value_masked, result_masked)
 
-                combined_loss = policy_loss + value_loss
-                combined_loss.backward()
-                self.optimizer.step()
+                    combined_loss = policy_loss + value_loss
+                if self.use_mixed_precision:
+                    self.grad_scaler.scale(combined_loss).backward()
+                    self.grad_scaler.step(self.optimizer)
+                    self.grad_scaler.update()
+                else:
+                    combined_loss.backward()
+                    self.optimizer.step()
                 self.lr_scheduler.step()
 
                 train_metrics['policy_loss'].append(policy_loss.detach().cpu().item())
@@ -130,17 +141,18 @@ class SupervisedLearning:
                     head_locs = head_locs.to(device=self.device)
                     still_alive = still_alive.to(device=self.device)
 
-                    logits, value = self.model(state, head_locs, still_alive)
+                    with amp.autocast(enabled=self.use_mixed_precision):
+                        logits, value = self.model(state, head_locs, still_alive)
 
-                    logits_masked = logits.view(-1, 4)[still_alive.view(-1, 1).expand(-1, 4)].view(-1, 4)
-                    action_masked = action.view(-1)[still_alive.view(-1)]
-                    policy_loss = F.cross_entropy(logits_masked, action_masked, reduction='sum')
+                        logits_masked = logits.view(-1, 4)[still_alive.view(-1, 1).expand(-1, 4)].view(-1, 4)
+                        action_masked = action.view(-1)[still_alive.view(-1)]
+                        policy_loss = F.cross_entropy(logits_masked, action_masked, reduction='sum')
 
-                    value_masked = value.view(-1)[still_alive.view(-1)]
-                    result_masked = result.view(-1)[still_alive.view(-1)]
-                    value_loss = F.mse_loss(value_masked, result_masked, reduction='sum')
+                        value_masked = value.view(-1)[still_alive.view(-1)]
+                        result_masked = result.view(-1)[still_alive.view(-1)]
+                        value_loss = F.mse_loss(value_masked, result_masked, reduction='sum')
 
-                    combined_loss = policy_loss + value_loss
+                        combined_loss = policy_loss + value_loss
 
                     preds = logits_masked.argmax(dim=-1)
 
