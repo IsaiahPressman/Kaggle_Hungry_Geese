@@ -27,6 +27,8 @@ class SupervisedPretraining:
             lr_scheduler: torch.optim.lr_scheduler,
             train_dataloader: DataLoader,
             test_dataloader: DataLoader,
+            policy_weight: float = 1.,
+            value_weight: float = 1.,
             device: torch.device = torch.device('cuda'),
             use_mixed_precision: bool = True,
             grad_scaler: amp.grad_scaler = amp.GradScaler(),
@@ -38,6 +40,10 @@ class SupervisedPretraining:
         self.model.train()
         self.optimizer = optimizer
         self.lr_scheduler = lr_scheduler
+        self.policy_weight = policy_weight
+        assert 0. <= self.policy_weight <= 1.
+        self.value_weight = value_weight
+        assert 0. <= self.value_weight <= 1.
         self.train_dataloader = train_dataloader
         self.test_dataloader = test_dataloader
         self.device = device
@@ -109,7 +115,7 @@ class SupervisedPretraining:
                     result_masked = result.view(-1)[still_alive.view(-1)]
                     value_loss = F.mse_loss(value_masked, result_masked)
 
-                    combined_loss = policy_loss + value_loss
+                    combined_loss = self.policy_weight * policy_loss + self.value_weight * value_loss
                 if self.use_mixed_precision:
                     self.grad_scaler.scale(combined_loss).backward()
                     self.grad_scaler.step(self.optimizer)
@@ -167,9 +173,20 @@ class SupervisedPretraining:
             self.log_test(test_metrics)
             if self.epoch_counter % self.checkpoint_freq == 0 and self.epoch_counter > 0:
                 self.checkpoint()
+            epoch_time = time.time() - epoch_start_time
             self.summary_writer.add_scalar('Time/epoch_time_minutes',
-                                           (time.time() - epoch_start_time) / 60.,
+                                           epoch_time / 60.,
                                            self.epoch_counter)
+            self.summary_writer.add_scalar(
+                'Time/batch_time_ms',
+                1000. * epoch_time / (len(self.train_dataloader) + len(self.test_dataloader)),
+                self.epoch_counter
+            )
+            self.summary_writer.add_scalar(
+                'Time/sample_time_ms',
+                1000. * epoch_time / (len(self.train_dataloader.dataset) + len(self.test_dataloader.dataset)),
+                self.epoch_counter
+            )
             self.epoch_counter += 1
 
     def log_train(self, train_metrics: Dict[str, List]) -> NoReturn:

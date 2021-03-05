@@ -227,8 +227,20 @@ class FullConvActorCriticNetwork(nn.Module):
         super(FullConvActorCriticNetwork, self).__init__()
         self.base = ResidualModel(**residual_model_kwargs)
         self.base_out_channels = residual_model_kwargs['conv_block_kwargs'][-1]['out_channels']
-        self.actor = nn.Linear(self.base_out_channels, 4)
-        self.critic = nn.Linear(self.base_out_channels, 1)
+        # self.actor = nn.Linear(self.base_out_channels, 4)
+        # self.critic = nn.Linear(self.base_out_channels, 1)
+        activation = residual_model_kwargs['conv_block_kwargs'][-1].get('activation', nn.ReLU)
+        fc_channels = int(self.base_out_channels / 4)
+        self.actor = nn.Sequential(
+            nn.Linear(self.base_out_channels, fc_channels),
+            activation(inplace=True),
+            nn.Linear(fc_channels, 4)
+        )
+        self.critic = nn.Sequential(
+            nn.Linear(self.base_out_channels, fc_channels),
+            activation(inplace=True),
+            nn.Linear(fc_channels, 1)
+        )
         self.cross_normalize_value = cross_normalize_value
         if self.cross_normalize_value:
             if value_activation is not None:
