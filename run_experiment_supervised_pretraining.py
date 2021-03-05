@@ -3,6 +3,7 @@ from pathlib import Path
 import shutil
 from sklearn.model_selection import train_test_split
 import torch
+from torch import nn
 from torch.utils.data import DataLoader
 from torchvision import transforms
 
@@ -16,28 +17,34 @@ if __name__ == '__main__':
     DEVICE = torch.device('cuda')
 
     obs_type = ge.ObsType.COMBINED_GRADIENT_OBS
-    channel_dims = [128, 64, 32]
+    n_channels = 128
+    activation = nn.ReLU
     model_kwargs = dict(
+        block_class=models.BasicConvolutionalBlock,
         conv_block_kwargs=[
             dict(
                 in_channels=obs_type.get_obs_spec()[-3],
-                out_channels=channel_dims[0],
-                kernel_size=5,
+                out_channels=n_channels,
+                kernel_size=3,
+                activation=activation,
                 normalize=False
             ),
             dict(
-                in_channels=channel_dims[0],
-                out_channels=channel_dims[1],
-                kernel_size=5,
+                in_channels=n_channels,
+                out_channels=n_channels,
+                kernel_size=3,
+                activation=activation,
                 normalize=False
             ),
             dict(
-                in_channels=channel_dims[1],
-                out_channels=channel_dims[2],
-                kernel_size=5,
+                in_channels=n_channels,
+                out_channels=n_channels,
+                kernel_size=3,
+                activation=activation,
                 normalize=False
-            )
+            ),
         ],
+        squeeze_excitation=True,
         cross_normalize_value=True,
         # **ge.RewardType.RANK_ON_DEATH.get_recommended_value_activation_scale_shift_dict()
     )
@@ -89,28 +96,31 @@ if __name__ == '__main__':
     dataloader_kwargs = dict(
         batch_size=512,
         shuffle=True,
-        num_workers=8,
+        num_workers=6,
         pin_memory=True
     )
     train_dataloader = DataLoader(train_dataset, **dataloader_kwargs)
     test_dataloader = DataLoader(test_dataset, **dataloader_kwargs)
 
-    experiment_name = 'supervised_learning_' + format_experiment_name(obs_type,
-                                                                      ge.RewardType.RANK_ON_DEATH,
-                                                                      ge.ActionMasking.NONE,
-                                                                      channel_dims,
-                                                                      model_kwargs['conv_block_kwargs']) + '_v2'
-    exp_folder = Path(f'runs/supervised_learning/{experiment_name}')
+    experiment_name = 'supervised_pretraining_' + format_experiment_name(obs_type,
+                                                                         ge.RewardType.RANK_ON_DEATH,
+                                                                         ge.ActionMasking.NONE,
+                                                                         [n_channels],
+                                                                         model_kwargs['conv_block_kwargs']) + '_v2'
+    exp_folder = Path(f'runs/supervised_pretraining/active/{experiment_name}')
     train_alg = SupervisedPretraining(
         model=model,
         optimizer=optimizer,
         lr_scheduler=lr_scheduler,
         train_dataloader=train_dataloader,
         test_dataloader=test_dataloader,
+        policy_weight=1.,
+        value_weight=1.,
         device=DEVICE,
+        use_mixed_precision=True,
         exp_folder=exp_folder,
-        checkpoint_freq=5,
-        checkpoint_render_n_games=5
+        checkpoint_freq=10,
+        checkpoint_render_n_games=2
     )
     this_script = Path(__file__).absolute()
     shutil.copy(this_script, train_alg.exp_folder / f'_{this_script.name}')
