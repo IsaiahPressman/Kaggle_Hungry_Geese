@@ -112,6 +112,31 @@ class Node:
             0
         )
 
+    def get_max_policy_actions(self) -> np.ndarray:
+        return self.get_improved_actions(0.)
+
+    def get_max_value_actions(self) -> np.ndarray:
+        max_values = self.q_vals.max(axis=1, keepdims=True)
+        probs = np.where(
+            self.q_vals == max_values,
+            1.,
+            0.
+        )
+        probs /= probs.sum(axis=1, keepdims=True)
+        return np.where(
+            self.geese_still_playing,
+            rowwise_random_choice(probs),
+            0
+        )
+
+    @staticmethod
+    def max_policy_actions(node: "Node") -> np.ndarray:
+        return node.get_max_policy_actions()
+
+    @staticmethod
+    def max_value_actions(node: "Node") -> np.ndarray:
+        return node.get_max_value_actions()
+
 
 class BasicMCTS:
     def __init__(
