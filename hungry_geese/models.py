@@ -76,7 +76,9 @@ class InvertedResidualBlock(nn.Module):
         else:
             raise ValueError(f'Padding must be an integer, but was {padding:0.2f}')
         if downsample is None:
-            downsample = nn.Identity()
+            self.downsample = nn.Identity()
+        else:
+            self.downsample = downsample
         mid_channels = in_channels * expansion_factor
 
         self.expansion = nn.Conv2d(
@@ -110,20 +112,40 @@ class InvertedResidualBlock(nn.Module):
         expanded = self.expansion_norm(self.expansion_act(self.expansion(x)))
         convolved = self.depthwise_conv_norm(self.depthwise_conv_act(self.depthwise_conv(expanded)))
         projected = self.projection_norm(self.projection_conv(convolved))
-        return projected
+        return self.downsample(projected)
+
+
+class SELayer(nn.Module):
+    def __init__(self, n_channels, reduction=16):
+        super(SELayer, self).__init__()
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.fc = nn.Sequential(
+            nn.Linear(n_channels, n_channels // reduction, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Linear(n_channels // reduction, n_channels, bias=False),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        b, c, _, _ = x.size()
+        y = self.avg_pool(x).view(b, c)
+        y = self.fc(y).view(b, c, 1, 1)
+        return x * y.expand_as(x)
 
 
 class ResidualModel(nn.Module):
     def __init__(
             self,
             block_class: Union[BasicConvolutionalBlock, InvertedResidualBlock],
-            conv_block_kwargs: Sequence[Dict]
+            conv_block_kwargs: Sequence[Dict],
+            squeeze_excitation: bool = True,
     ):
         super(ResidualModel, self).__init__()
         assert len(conv_block_kwargs) >= 1
         self.conv_blocks = nn.ModuleList()
         self.change_n_channels = nn.ModuleList()
         self.downsamplers = nn.ModuleList()
+        self.se_layers = nn.ModuleList()
         self.activations = nn.ModuleList()
         for kwargs in conv_block_kwargs:
             self.conv_blocks.append(block_class(**kwargs))
@@ -132,20 +154,21 @@ class ResidualModel(nn.Module):
             else:
                 self.change_n_channels.append(nn.Identity())
             self.downsamplers.append(kwargs.get('downsample', nn.Identity()))
+            self.se_layers.append(SELayer(kwargs['out_channels']) if squeeze_excitation else nn.Identity())
             self.activations.append(kwargs.get('activation', nn.ReLU)(inplace=True))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        for cb, cnc, d, a in zip(
-                self.conv_blocks,
-                self.change_n_channels,
-                self.downsamplers,
-                self.activations
+        for cb, cnc, d, se, a in zip(
+            self.conv_blocks,
+            self.change_n_channels,
+            self.downsamplers,
+            self.se_layers,
+            self.activations
         ):
             identity = x
-            x = cb(x)
+            x = se(cb(x))
             x = x + d(cnc(identity))
             x = a(x)
-            # print(x.shape)
         return x
 
 
@@ -227,20 +250,20 @@ class FullConvActorCriticNetwork(nn.Module):
         super(FullConvActorCriticNetwork, self).__init__()
         self.base = ResidualModel(**residual_model_kwargs)
         self.base_out_channels = residual_model_kwargs['conv_block_kwargs'][-1]['out_channels']
-        # self.actor = nn.Linear(self.base_out_channels, 4)
-        # self.critic = nn.Linear(self.base_out_channels, 1)
-        activation = residual_model_kwargs['conv_block_kwargs'][-1].get('activation', nn.ReLU)
-        fc_channels = int(self.base_out_channels / 4)
-        self.actor = nn.Sequential(
-            nn.Linear(self.base_out_channels, fc_channels),
-            activation(inplace=True),
-            nn.Linear(fc_channels, 4)
-        )
-        self.critic = nn.Sequential(
-            nn.Linear(self.base_out_channels, fc_channels),
-            activation(inplace=True),
-            nn.Linear(fc_channels, 1)
-        )
+        self.actor = nn.Linear(self.base_out_channels, 4)
+        self.critic = nn.Linear(self.base_out_channels, 1)
+        # activation = residual_model_kwargs['conv_block_kwargs'][-1].get('activation', nn.ReLU)
+        # fc_channels = int(self.base_out_channels / 4)
+        # self.actor = nn.Sequential(
+        #     nn.Linear(self.base_out_channels, fc_channels),
+        #     activation(inplace=True),
+        #     nn.Linear(fc_channels, 4)
+        # )
+        # self.critic = nn.Sequential(
+        #     nn.Linear(self.base_out_channels, fc_channels),
+        #     activation(inplace=True),
+        #     nn.Linear(fc_channels, 1)
+        # )
         self.cross_normalize_value = cross_normalize_value
         if self.cross_normalize_value:
             if value_activation is not None:
