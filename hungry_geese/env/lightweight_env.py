@@ -233,7 +233,7 @@ class LightweightEnv:
         return out
 
 
-def make(environment: str, debug: bool = False, **kwargs) -> LightweightEnv:
+def make(environment: str = 'hungry_geese', debug: bool = False, **kwargs) -> LightweightEnv:
     assert environment == 'hungry_geese'
     config = kaggle_make(environment, debug=debug, **kwargs).configuration
     return LightweightEnv(config, debug=debug)
