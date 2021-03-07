@@ -29,6 +29,7 @@ class SupervisedPretraining:
             test_dataloader: DataLoader,
             policy_weight: float = 1.,
             value_weight: float = 1.,
+            entropy_weight: float = 0.05,
             device: torch.device = torch.device('cuda'),
             use_mixed_precision: bool = True,
             grad_scaler: amp.grad_scaler = amp.GradScaler(),
@@ -41,9 +42,11 @@ class SupervisedPretraining:
         self.optimizer = optimizer
         self.lr_scheduler = lr_scheduler
         self.policy_weight = policy_weight
-        assert 0. <= self.policy_weight <= 1.
+        assert self.policy_weight >= 0.
         self.value_weight = value_weight
-        assert 0. <= self.value_weight <= 1.
+        assert self.value_weight >= 0.
+        self.entropy_weight = entropy_weight
+        assert self.entropy_weight >= 0.
         self.train_dataloader = train_dataloader
         self.test_dataloader = test_dataloader
         self.device = device
@@ -93,29 +96,15 @@ class SupervisedPretraining:
             train_metrics = {
                 'policy_loss': [],
                 'value_loss': [],
+                'entropy_loss': [],
                 'combined_loss': []
             }
-            for state, action, result, head_locs, still_alive in tqdm(self.train_dataloader,
-                                                                      desc=f'Epoch #{epoch} train'):
-                state = state.to(device=self.device)
-                action = action.to(device=self.device)
-                result = result.to(device=self.device)
-                head_locs = head_locs.to(device=self.device)
-                still_alive = still_alive.to(device=self.device)
-
+            for train_tuple in tqdm(self.train_dataloader, desc=f'Epoch #{epoch} train'):
                 self.optimizer.zero_grad()
-                with amp.autocast(enabled=self.use_mixed_precision):
-                    logits, value = self.model(state, head_locs, still_alive)
-
-                    logits = logits.view(-1, 4)
-                    action = action.view(-1)
-                    policy_loss = F.cross_entropy(logits, action, ignore_index=-1)
-
-                    value_masked = value.view(-1)[still_alive.view(-1)]
-                    result_masked = result.view(-1)[still_alive.view(-1)]
-                    value_loss = F.mse_loss(value_masked, result_masked)
-
-                    combined_loss = self.policy_weight * policy_loss + self.value_weight * value_loss
+                policy_loss, value_loss, entropy_loss, combined_loss = self.compute_losses(
+                    *[t.to(device=self.device) for t in train_tuple],
+                    reduction='mean'
+                )
                 if self.use_mixed_precision:
                     self.grad_scaler.scale(combined_loss).backward()
                     self.grad_scaler.step(self.optimizer)
@@ -123,10 +112,13 @@ class SupervisedPretraining:
                 else:
                     combined_loss.backward()
                     self.optimizer.step()
-                self.lr_scheduler.step()
+                with warnings.catch_warnings():
+                    warnings.filterwarnings('ignore', category=UserWarning)
+                    self.lr_scheduler.step()
 
                 train_metrics['policy_loss'].append(policy_loss.detach().cpu().item())
                 train_metrics['value_loss'].append(value_loss.detach().cpu().item())
+                train_metrics['entropy_loss'].append(entropy_loss.detach().cpu().item())
                 train_metrics['combined_loss'].append(combined_loss.detach().cpu().item())
             self.log_train(train_metrics)
 
@@ -134,36 +126,25 @@ class SupervisedPretraining:
             test_metrics = {
                 'policy_loss': 0.,
                 'value_loss': 0.,
+                'entropy_loss': 0.,
                 'combined_loss': 0.,
                 'policy_accuracy': 0.
             }
             n_test_samples = 0.
             with torch.no_grad():
-                for state, action, result, head_locs, still_alive in tqdm(self.test_dataloader,
-                                                                          desc=f'Epoch #{epoch} test'):
-                    state = state.to(device=self.device)
-                    action = action.to(device=self.device)
-                    result = result.to(device=self.device)
-                    head_locs = head_locs.to(device=self.device)
-                    still_alive = still_alive.to(device=self.device)
-
-                    with amp.autocast(enabled=self.use_mixed_precision):
-                        logits, value = self.model(state, head_locs, still_alive)
-
-                        logits_masked = logits.view(-1, 4)[still_alive.view(-1, 1).expand(-1, 4)].view(-1, 4)
-                        action_masked = action.view(-1)[still_alive.view(-1)]
-                        policy_loss = F.cross_entropy(logits_masked, action_masked, reduction='sum')
-
-                        value_masked = value.view(-1)[still_alive.view(-1)]
-                        result_masked = result.view(-1)[still_alive.view(-1)]
-                        value_loss = F.mse_loss(value_masked, result_masked, reduction='sum')
-
-                        combined_loss = policy_loss + value_loss
-
-                    preds = logits_masked.argmax(dim=-1)
+                for test_tuple in tqdm(self.test_dataloader, desc=f'Epoch #{epoch} test'):
+                    test_tuple = [t.to(device=self.device) for t in test_tuple]
+                    state, action, result, head_locs, still_alive = test_tuple
+                    policy_loss, value_loss, entropy_loss, combined_loss, preds = self.compute_losses(
+                        *test_tuple,
+                        reduction='sum',
+                        get_preds=True
+                    )
+                    action_masked = action.view(-1)[still_alive.view(-1)]
 
                     test_metrics['policy_loss'] += policy_loss.detach().cpu().item()
                     test_metrics['value_loss'] += value_loss.detach().cpu().item()
+                    test_metrics['entropy_loss'] += entropy_loss.detach().cpu().item()
                     test_metrics['combined_loss'] += combined_loss.detach().cpu().item()
                     test_metrics['policy_accuracy'] += preds.eq(action_masked).sum().cpu().item()
                     n_test_samples += still_alive.sum().cpu().item()
@@ -188,6 +169,47 @@ class SupervisedPretraining:
                 self.epoch_counter
             )
             self.epoch_counter += 1
+
+    def compute_losses(
+            self,
+            state: torch.Tensor,
+            action: torch.Tensor,
+            result: torch.Tensor,
+            head_locs: torch.Tensor,
+            still_alive: torch.Tensor,
+            reduction: str = 'mean',
+            get_preds: bool = False
+    ) -> Tuple[torch.Tensor, ...]:
+        with amp.autocast(enabled=self.use_mixed_precision):
+            logits, value = self.model(state, head_locs, still_alive)
+
+            logits_masked = logits.view(-1, 4)[still_alive.view(-1, 1).expand(-1, 4)].view(-1, 4)
+            action_masked = action.view(-1)[still_alive.view(-1)]
+            policy_loss = F.cross_entropy(logits_masked, action_masked, reduction=reduction)
+
+            value_masked = value.view(-1)[still_alive.view(-1)]
+            result_masked = result.view(-1)[still_alive.view(-1)]
+            value_loss = F.mse_loss(value_masked, result_masked, reduction=reduction)
+
+            probs_masked = F.softmax(logits_masked, dim=-1)
+            entropy_loss = torch.sum(probs_masked * torch.log(probs_masked), dim=-1)
+            if reduction == 'none':
+                pass
+            elif reduction == 'mean':
+                entropy_loss = entropy_loss.mean()
+            elif reduction == 'sum':
+                entropy_loss = entropy_loss.sum()
+            else:
+                raise ValueError(f'Unrecognized reduction: {reduction}')
+
+            combined_loss = (self.policy_weight * policy_loss +
+                             self.value_weight * value_loss +
+                             self.entropy_weight * entropy_loss)
+
+        if get_preds:
+            return policy_loss, value_loss, entropy_loss, combined_loss, logits_masked.argmax(dim=-1)
+        else:
+            return policy_loss, value_loss, entropy_loss, combined_loss
 
     def log_train(self, train_metrics: Dict[str, List]) -> NoReturn:
         n_batches = len(self.train_dataloader)

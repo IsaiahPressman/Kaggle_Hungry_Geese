@@ -59,8 +59,8 @@ if __name__ == '__main__':
         '-g',
         '--n_games',
         type=int,
-        default=(multiprocessing.cpu_count()-1)*2,
-        help=f'The number of games to play. Default: {(multiprocessing.cpu_count()-1)*2}'
+        default=1,
+        help=f'The number of games to play. Default: 1'
     )
     parser.add_argument(
         '-s',
@@ -73,8 +73,8 @@ if __name__ == '__main__':
         '-w',
         '--n_workers',
         type=int,
-        default=multiprocessing.cpu_count()-1,
-        help=f'The number of worker processes to use. Default: {multiprocessing.cpu_count()-1}'
+        default=1,
+        help=f'The number of worker processes to use. Default: 1'
     )
     args = parser.parse_args()
 
