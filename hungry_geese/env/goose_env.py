@@ -7,7 +7,7 @@ from torch import nn
 from typing import *
 
 from ..config import *
-from .lightweight_env import make as lightweight_make
+from .lightweight_env import make
 from ..utils import ActionMasking, row_col
 
 
@@ -113,7 +113,7 @@ def _get_direction(from_position: int, to_position: int) -> str:
 class VectorizedEnv:
     def __init__(self, obs_type: Union[ObsType, Sequence[ObsType]], reward_type: RewardType,
                  action_masking: ActionMasking = ActionMasking.OPPOSITE,
-                 n_envs: int = 1, n_players: int = 4, silent_reset: bool = True, make_fn=lightweight_make):
+                 n_envs: int = 1, n_players: int = 4, silent_reset: bool = True, make_fn=make):
         self.obs_type = obs_type
         self.reward_type = reward_type
         self.action_masking = action_masking

@@ -9,7 +9,7 @@ from torchvision import transforms
 
 from hungry_geese import models
 import hungry_geese.env.goose_env as ge
-from hungry_geese.training.alphagoose.alphagoose_data import AlphaGooseDataset, RandomReflect, ToTensor
+from hungry_geese.training.alphagoose.alphagoose_data import AlphaGoosePretrainDataset, RandomReflect, ToTensor
 from hungry_geese.training.alphagoose.supervised_pretraining import SupervisedPretraining
 from hungry_geese.utils import format_experiment_name
 
@@ -72,13 +72,13 @@ if __name__ == '__main__':
         gamma=0.1
     )
 
-    dataset_loc = Path('/home/isaiah/data/alphagoose_data/')
+    dataset_loc = Path('/home/isaiah/data/alphagoose_pretrain_data_1000/')
     with open(dataset_loc / 'all_saved_episodes.txt', 'r') as f:
         all_episodes = [replay_name.rstrip() for replay_name in f.readlines()]
-    train_episodes, test_episodes = train_test_split(np.array(all_episodes), test_size=0.1)
+    train_episodes, test_episodes = train_test_split(np.array(all_episodes), test_size=0.05)
     train_episodes = set(train_episodes)
     test_episodes = set(test_episodes)
-    train_dataset = AlphaGooseDataset(
+    train_dataset = AlphaGoosePretrainDataset(
         dataset_loc,
         ge.ObsType.COMBINED_GRADIENT_OBS,
         transform=transforms.Compose([
@@ -87,26 +87,28 @@ if __name__ == '__main__':
         ]),
         include_episode=lambda x: x.stem in train_episodes
     )
-    test_dataset = AlphaGooseDataset(
+    test_dataset = AlphaGoosePretrainDataset(
         dataset_loc,
         ge.ObsType.COMBINED_GRADIENT_OBS,
         transform=ToTensor(),
         include_episode=lambda x: x.stem in test_episodes
     )
+    print(f'Split {len(train_episodes) + len(test_episodes)} episodes into '
+          f'{len(train_dataset)} samples from {len(train_episodes)} train episodes and '
+          f'{len(test_dataset)} samples from {len(test_episodes)} test episodes.')
     dataloader_kwargs = dict(
         batch_size=512,
         shuffle=True,
-        num_workers=6,
         pin_memory=True
     )
-    train_dataloader = DataLoader(train_dataset, **dataloader_kwargs)
-    test_dataloader = DataLoader(test_dataset, **dataloader_kwargs)
+    train_dataloader = DataLoader(train_dataset, num_workers=0, **dataloader_kwargs)
+    test_dataloader = DataLoader(test_dataset, num_workers=10, **dataloader_kwargs)
 
     experiment_name = 'supervised_pretraining_' + format_experiment_name(obs_type,
                                                                          ge.RewardType.RANK_ON_DEATH,
                                                                          ge.ActionMasking.NONE,
                                                                          [n_channels],
-                                                                         model_kwargs['conv_block_kwargs']) + '_v2'
+                                                                         model_kwargs['conv_block_kwargs']) + '_TEMP'
     exp_folder = Path(f'runs/supervised_pretraining/active/{experiment_name}')
     train_alg = SupervisedPretraining(
         model=model,
@@ -116,6 +118,7 @@ if __name__ == '__main__':
         test_dataloader=test_dataloader,
         policy_weight=1.,
         value_weight=1.,
+        entropy_weight=0.05,
         device=DEVICE,
         use_mixed_precision=True,
         exp_folder=exp_folder,

@@ -144,17 +144,25 @@ class BasicMCTS:
             action_mask_func: Callable,
             actor_critic_func: Callable,
             terminal_value_func: Callable,
-            c_puct: float = np.sqrt(2.),
-            include_food: bool = False,
+            c_puct: float = 1.,
+            noise_val: float = 2.,
+            noise_weight: float = 0.25,
+            include_food: bool = True,
     ):
         self.action_mask_func = action_mask_func
         self.actor_critic_func = actor_critic_func
         self.terminal_value_func = terminal_value_func
         self.c_puct = c_puct
+        self.noise_val = noise_val
+        self.noise_weight = noise_weight
         self.include_food = include_food
         self.nodes = {}
 
-    def _search(self, env: LightweightEnv) -> np.ndarray:
+    def _search(
+            self,
+            env: LightweightEnv,
+            add_noise: bool = False
+    ) -> np.ndarray:
         """
         This function performs one iteration of MCTS. It is recursively called
         until a leaf node is found. The action chosen at each node is one that
@@ -175,6 +183,9 @@ class BasicMCTS:
             # Leaf node
             full_state = env.state
             policy_est, value_est = self.actor_critic_func(full_state)
+            if add_noise:
+                noise = np.random.dirichlet(np.zeros(4) + self.noise_val, size=(len(env.geese),))
+                policy_est = (1. - self.noise_weight) * policy_est + self.noise_weight * noise
             self.nodes[s] = Node(
                 [status == 'ACTIVE' for status in env.get_statuses()],
                 self.action_mask_func(full_state),
@@ -189,16 +200,75 @@ class BasicMCTS:
         node.update(a, v)
         return v
 
+    def expand(
+            self,
+            env: LightweightEnv,
+            trajectory: Tuple[Tuple[str, Optional[np.ndarray]], ...] = ()
+    ) -> Tuple[
+        List[Dict],
+        Tuple[Tuple[str, Optional[Tuple[int]]], ...],
+        bool,
+        Optional[List[bool]],
+        Optional[np.ndarray]
+    ]:
+        if env.done:
+            return env.state, trajectory, True, None, None
+
+        s = env.canonical_string_repr(include_food=self.include_food)
+        node = self.nodes.get(s, None)
+        if node is None:
+            # Leaf node
+            full_state = env.state
+            still_alive = [status == 'ACTIVE' for status in env.get_statuses()]
+            available_actions = self.action_mask_func(full_state)
+            return full_state, trajectory + ((s, None),), False, still_alive, available_actions
+
+        a = node.get_puct_actions(self.c_puct).ravel()
+        env.step(a)
+        return self.expand(env, trajectory + ((s, a),))
+
+    def backpropagate(
+            self,
+            trajectory: Tuple[Tuple[str, Optional[Tuple[int]]], ...],
+            policy_est: Optional[np.ndarray],
+            value_est: np.ndarray,
+            still_alive: List[bool],
+            available_actions: np.ndarray,
+            add_noise: bool = False
+    ):
+        for i, (s, a) in enumerate(trajectory):
+            if a is not None:
+                node = self.nodes[s]
+                node.update(a, value_est)
+            else:
+                # Noise should only be added to the root node
+                if add_noise and i == 0:
+                    noise = np.random.dirichlet(np.zeros(4) + self.noise_val, size=(policy_est.shape[0],))
+                    policy_est = (1. - self.noise_weight) * policy_est + self.noise_weight * noise
+                self.nodes[s] = Node(
+                    still_alive,
+                    available_actions,
+                    policy_est,
+                    value_est
+                )
+
     def run_mcts(
             self,
             env: LightweightEnv,
             n_iter: int,
             max_time: float = float('inf'),
+            add_noise: bool = False
     ) -> Node:
         start_time = time.time()
         for _ in range(n_iter):
             if time.time() - start_time >= max_time:
                 break
-            self._search(env.clone())
+            self._search(env.lightweight_clone(), add_noise=add_noise)
 
+        return self.get_root_node(env)
+
+    def get_root_node(self, env: LightweightEnv) -> Node:
         return self.nodes[env.canonical_string_repr(include_food=self.include_food)]
+
+    def reset(self) -> NoReturn:
+        self.nodes = {}

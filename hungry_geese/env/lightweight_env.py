@@ -3,7 +3,6 @@ from kaggle_environments import make as kaggle_make
 from kaggle_environments.envs.hungry_geese.hungry_geese import Action, Configuration, Observation, histogram, translate
 import numpy as np
 from random import sample
-from scipy import stats
 from typing import *
 
 
@@ -149,8 +148,8 @@ class LightweightEnv:
             if i == 0:
                 dict_i['observation'].update({
                     'step': self.step_counter,
-                    'geese': self.geese,
-                    'food': self.food
+                    'geese': [[g for g in goose] for goose in self.geese],
+                    'food': [f for f in self.food]
                 })
             state_dict_list.append(dict_i)
 
@@ -171,23 +170,19 @@ class LightweightEnv:
         else:
             return ['ACTIVE' if len(goose) > 0 else 'DONE' for goose in self.geese]
 
-    def clone(self):
+    def lightweight_clone(self):
         cloned_env = LightweightEnv(self.configuration)
 
         cloned_env.agent_count = self.agent_count
-        cloned_env.geese = copy.deepcopy(self.geese)
-        cloned_env.food = copy.copy(self.food)
-        cloned_env.last_actions = copy.copy(self.last_actions)
+        cloned_env.geese = [[g for g in goose] for goose in self.geese]
+        cloned_env.food = [f for f in self.food]
+        cloned_env.last_actions = [a for a in self.last_actions]
         cloned_env.step_counter = self.step_counter
-        cloned_env.rewards = copy.copy(self.rewards)
-        cloned_env.steps = copy.deepcopy(self.steps)
+        cloned_env.rewards = [r for r in self.rewards]
+        cloned_env.steps = [None] * (len(self.steps) - 1)
+        cloned_env.steps.append(copy.deepcopy(self.steps[-1]))
 
         return cloned_env
-
-    def __deepcopy__(self, memo=None):
-        if memo is None:
-            memo = {}
-        return self.clone()
 
     def canonical_string_repr(self, include_food=True) -> str:
         if self.done:
@@ -235,7 +230,7 @@ class LightweightEnv:
 
 def make(environment: str = 'hungry_geese', debug: bool = False, **kwargs) -> LightweightEnv:
     assert environment == 'hungry_geese'
-    config = kaggle_make(environment, debug=debug, **kwargs).configuration
+    config = Configuration(kaggle_make(environment, debug=debug, **kwargs).configuration)
     return LightweightEnv(config, debug=debug)
 
 
