@@ -9,7 +9,7 @@ from torchvision import transforms
 
 from hungry_geese import models
 import hungry_geese.env.goose_env as ge
-from hungry_geese.training.alphagoose.alphagoose_data import AlphaGoosePretrainDataset, RandomReflect, ToTensor
+from hungry_geese.training.alphagoose.alphagoose_data import AlphaGoosePretrainDataset, PretrainRandomReflect, ToTensor
 from hungry_geese.training.alphagoose.supervised_pretraining import SupervisedPretraining
 from hungry_geese.utils import format_experiment_name
 
@@ -82,7 +82,7 @@ if __name__ == '__main__':
         dataset_loc,
         ge.ObsType.COMBINED_GRADIENT_OBS,
         transform=transforms.Compose([
-            RandomReflect(obs_type),
+            PretrainRandomReflect(obs_type),
             ToTensor()
         ]),
         include_episode=lambda x: x.stem in train_episodes

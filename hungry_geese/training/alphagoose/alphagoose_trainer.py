@@ -3,7 +3,6 @@ from kaggle_environments import make
 import numpy as np
 from pathlib import Path
 import pickle
-import shutil
 import time
 import torch
 import torch.nn.functional as F
@@ -15,25 +14,26 @@ from tqdm import tqdm
 from typing import *
 import warnings
 
+from .alphagoose_data import AlphaGooseDataset
 from ...models import FullConvActorCriticNetwork
 from ...env import goose_env as ge
 
 
-class SupervisedPretraining:
+class AlphaGooseTrainer:
     def __init__(
             self,
             model: FullConvActorCriticNetwork,
             optimizer: torch.optim,
             lr_scheduler: torch.optim.lr_scheduler,
-            train_dataloader: DataLoader,
-            test_dataloader: DataLoader,
+            dataset_kwargs: Dict,
+            dataloader_kwargs: Dict,
+            max_saved_steps: int,
             policy_weight: float = 1.,
             value_weight: float = 1.,
-            entropy_weight: float = 0.05,
             device: torch.device = torch.device('cuda'),
             use_mixed_precision: bool = True,
             grad_scaler: amp.grad_scaler = amp.GradScaler(),
-            exp_folder: Path = Path('runs/supervised_pretraining/TEMP'),
+            exp_folder: Path = Path('runs/alphagoose/TEMP'),
             checkpoint_freq: int = 10,
             checkpoint_render_n_games: int = 10
     ):
@@ -41,32 +41,31 @@ class SupervisedPretraining:
         self.model.train()
         self.optimizer = optimizer
         self.lr_scheduler = lr_scheduler
+        self.dataset_kwargs = dataset_kwargs
+        self.dataloader_kwargs = dataloader_kwargs
+        self.max_saved_steps = max_saved_steps
         self.policy_weight = policy_weight
         assert self.policy_weight >= 0.
         self.value_weight = value_weight
         assert self.value_weight >= 0.
-        self.entropy_weight = entropy_weight
-        assert self.entropy_weight >= 0.
-        self.train_dataloader = train_dataloader
-        self.test_dataloader = test_dataloader
         self.device = device
         self.use_mixed_precision = use_mixed_precision
         self.grad_scaler = grad_scaler
         self.exp_folder = exp_folder.absolute()
-        if self.exp_folder.name == 'TEMP':
-            print('WARNING: Using TEMP exp_folder')
-            if self.exp_folder.exists():
-                shutil.rmtree(self.exp_folder)
-        elif self.exp_folder.exists() and any(Path(self.exp_folder).iterdir()):
-            raise RuntimeError(f'Experiment folder {self.exp_folder} already exists and is not empty')
+        starting_weights_path = self.exp_folder / 'starting_weights.txt'
+        if not starting_weights_path.exists():
+            raise FileNotFoundError(f'{starting_weights_path} does not exist')
         else:
-            print(f'Saving results to {self.exp_folder}')
-        self.exp_folder.mkdir(exist_ok=True)
+            if (self.exp_folder / '0.pt').exists():
+                raise RuntimeError(f'{self.exp_folder} already has checkpoints in it')
+            else:
+                print(f'Saving results to {self.exp_folder}')
+        self.pt_weights_dir = self.exp_folder / 'all_checkpoints_pt'
         self.checkpoint_freq = checkpoint_freq
         self.checkpoint_render_n_games = checkpoint_render_n_games
         if self.checkpoint_render_n_games > 0:
             self.rendering_env_kwargs = dict(
-                obs_type=self.train_dataloader.dataset.obs_type,
+                obs_type=dataset_kwargs['obs_type'],
                 reward_type=ge.RewardType.RANK_ON_DEATH,
                 action_masking=ge.ActionMasking.LETHAL,
                 n_envs=max(self.checkpoint_render_n_games, 20),
@@ -79,7 +78,15 @@ class SupervisedPretraining:
         self.epoch_counter = 0
         self.summary_writer = SummaryWriter(str(self.exp_folder))
 
-        dummy_state = torch.zeros(self.train_dataloader.dataset.obs_type.get_obs_spec()[1:])
+        with open(starting_weights_path, 'r') as f:
+            serialized_string = f.readline()[2:-1].encode()
+        state_dict_bytes = base64.b64decode(serialized_string)
+        loaded_state_dicts = pickle.loads(state_dict_bytes)
+        model.load_state_dict(loaded_state_dicts)
+        # This is where the alphagoose_data_generators will find the model weights
+        torch.save(model.state_dict(), self.exp_folder / f'0.pt')
+
+        dummy_state = torch.zeros(dataset_kwargs['obs_type'].get_obs_spec()[1:])
         dummy_head_loc = torch.arange(4).to(dtype=torch.int64)
         still_alive = torch.ones(4).to(dtype=torch.bool)
         with warnings.catch_warnings():
@@ -92,18 +99,27 @@ class SupervisedPretraining:
             )
 
     def train(self, n_epochs: int) -> NoReturn:
+        dataset = []
+        dataloader = None
         for epoch in range(n_epochs):
+            if epoch == 0 or len(dataset) != self.max_saved_steps:
+                # Arbitrary minimum number of samples for training
+                while len(dataset) < 10000:
+                    dataset = AlphaGooseDataset(**self.dataset_kwargs)
+                    if len(dataset) < 10000:
+                        print(f'Only {len(dataset)} out of {10000} minimum samples found. Sleeping...')
+                        time.sleep(20.)
+                dataloader = DataLoader(dataset, **self.dataloader_kwargs)
             epoch_start_time = time.time()
             self.model.train()
             train_metrics = {
                 'policy_loss': [],
                 'value_loss': [],
-                'entropy_loss': [],
                 'combined_loss': []
             }
-            for train_tuple in tqdm(self.train_dataloader, desc=f'Epoch #{epoch} train'):
+            for train_tuple in tqdm(dataloader, desc=f'Epoch #{epoch} train'):
                 self.optimizer.zero_grad()
-                policy_loss, value_loss, entropy_loss, combined_loss = self.compute_losses(
+                policy_loss, value_loss, combined_loss = self.compute_losses(
                     *[t.to(device=self.device, non_blocking=True) for t in train_tuple],
                     reduction='mean'
                 )
@@ -120,40 +136,9 @@ class SupervisedPretraining:
 
                 train_metrics['policy_loss'].append(policy_loss.detach().cpu().item())
                 train_metrics['value_loss'].append(value_loss.detach().cpu().item())
-                train_metrics['entropy_loss'].append(entropy_loss.detach().cpu().item())
                 train_metrics['combined_loss'].append(combined_loss.detach().cpu().item())
-            self.log_train(train_metrics)
+            self.log_train(train_metrics, len(dataloader))
 
-            self.model.eval()
-            test_metrics = {
-                'policy_loss': 0.,
-                'value_loss': 0.,
-                'entropy_loss': 0.,
-                'combined_loss': 0.,
-                'policy_accuracy': 0.
-            }
-            n_test_samples = 0.
-            with torch.no_grad():
-                for test_tuple in tqdm(self.test_dataloader, desc=f'Epoch #{epoch} test'):
-                    test_tuple = [t.to(device=self.device, non_blocking=True) for t in test_tuple]
-                    state, action, result, head_locs, still_alive = test_tuple
-                    policy_loss, value_loss, entropy_loss, combined_loss, preds = self.compute_losses(
-                        *test_tuple,
-                        reduction='sum',
-                        get_preds=True
-                    )
-                    action_masked = action.view(-1)[still_alive.view(-1)]
-
-                    test_metrics['policy_loss'] += policy_loss.detach().cpu().item()
-                    test_metrics['value_loss'] += value_loss.detach().cpu().item()
-                    test_metrics['entropy_loss'] += entropy_loss.detach().cpu().item()
-                    test_metrics['combined_loss'] += combined_loss.detach().cpu().item()
-                    test_metrics['policy_accuracy'] += preds.eq(action_masked).sum().cpu().item()
-                    n_test_samples += still_alive.sum().cpu().item()
-
-                for key, metric in test_metrics.items():
-                    test_metrics[key] = metric / n_test_samples
-            self.log_test(test_metrics)
             if self.epoch_counter % self.checkpoint_freq == 0 and self.epoch_counter > 0:
                 self.checkpoint()
             epoch_time = time.time() - epoch_start_time
@@ -162,12 +147,12 @@ class SupervisedPretraining:
                                            self.epoch_counter)
             self.summary_writer.add_scalar(
                 'Time/batch_time_ms',
-                1000. * epoch_time / (len(self.train_dataloader) + len(self.test_dataloader)),
+                1000. * epoch_time / (len(dataloader)),
                 self.epoch_counter
             )
             self.summary_writer.add_scalar(
                 'Time/sample_time_ms',
-                1000. * epoch_time / (len(self.train_dataloader.dataset) + len(self.test_dataloader.dataset)),
+                1000. * epoch_time / len(dataset),
                 self.epoch_counter
             )
             self.epoch_counter += 1
@@ -179,9 +164,8 @@ class SupervisedPretraining:
             result: torch.Tensor,
             head_locs: torch.Tensor,
             still_alive: torch.Tensor,
-            reduction: str = 'mean',
-            get_preds: bool = False
-    ) -> Tuple[torch.Tensor, ...]:
+            reduction: str = 'mean'
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         with amp.autocast(enabled=self.use_mixed_precision):
             logits, value = self.model(state, head_locs, still_alive)
 
@@ -193,28 +177,12 @@ class SupervisedPretraining:
             result_masked = result.view(-1)[still_alive.view(-1)]
             value_loss = F.mse_loss(value_masked, result_masked, reduction=reduction)
 
-            probs_masked = F.softmax(logits_masked, dim=-1)
-            entropy_loss = torch.sum(probs_masked * torch.log(probs_masked), dim=-1)
-            if reduction == 'none':
-                pass
-            elif reduction == 'mean':
-                entropy_loss = entropy_loss.mean()
-            elif reduction == 'sum':
-                entropy_loss = entropy_loss.sum()
-            else:
-                raise ValueError(f'Unrecognized reduction: {reduction}')
-
             combined_loss = (self.policy_weight * policy_loss +
-                             self.value_weight * value_loss +
-                             self.entropy_weight * entropy_loss)
+                             self.value_weight * value_loss)
 
-        if get_preds:
-            return policy_loss, value_loss, entropy_loss, combined_loss, logits_masked.argmax(dim=-1)
-        else:
-            return policy_loss, value_loss, entropy_loss, combined_loss
+        return policy_loss, value_loss, combined_loss
 
-    def log_train(self, train_metrics: Dict[str, List]) -> NoReturn:
-        n_batches = len(self.train_dataloader)
+    def log_train(self, train_metrics: Dict[str, List], n_batches: int) -> NoReturn:
         for metric_name, metric in train_metrics.items():
             self.summary_writer.add_scalar(f'Epoch/train_{metric_name}',
                                            np.mean(metric),
@@ -228,12 +196,6 @@ class SupervisedPretraining:
         self.summary_writer.add_scalar(f'Epoch/learning_rate',
                                        last_lr[0],
                                        self.epoch_counter)
-
-    def log_test(self, test_metrics: Dict[str, float]) -> NoReturn:
-        for metric_name, metric in test_metrics.items():
-            self.summary_writer.add_scalar(f'Epoch/test_{metric_name}',
-                                           metric,
-                                           self.epoch_counter)
 
     def checkpoint(self):
         checkpoint_start_time = time.time()
@@ -301,6 +263,8 @@ class SupervisedPretraining:
             save_dir.mkdir()
         # Save model params
         self.model.cpu()
+        # Save model to weights_dir for data_generator_workers
+        torch.save(self.model.state_dict(), self.pt_weights_dir / f'{self.epoch_counter}.pt')
         state_dict_bytes = pickle.dumps(self.model.state_dict())
         serialized_string = base64.b64encode(state_dict_bytes)
         with open(save_dir / 'cp.txt', 'w') as f:
