@@ -58,4 +58,5 @@ if __name__ == '__main__':
         obs_type=obs_type,
         model_reload_freq=100,
         n_iter=100,
+        include_food=True,
     )
