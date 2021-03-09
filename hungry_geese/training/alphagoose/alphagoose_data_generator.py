@@ -31,7 +31,7 @@ def alphagoose_data_generator_worker(
         n_iter: int,
         **mcts_kwargs
 ):
-    # FOr whatever reason, this sleep statement helps prevent CUDNN_NOT_INITIALIZED errors
+    # For whatever reason, this sleep statement helps prevent CUDNN_NOT_INITIALIZED errors
     time.sleep(2.)
     # Create environments
     envs = [make() for _ in range(n_envs_per_worker)]

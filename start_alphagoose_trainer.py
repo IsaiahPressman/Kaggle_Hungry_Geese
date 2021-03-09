@@ -69,7 +69,7 @@ if __name__ == '__main__':
     dataloader_kwargs = dict(
         batch_size=512,
         shuffle=True,
-        num_workers=0,
+        num_workers=4,
         pin_memory=True
     )
 
@@ -85,7 +85,6 @@ if __name__ == '__main__':
         lr_scheduler=lr_scheduler,
         dataset_kwargs=dataset_kwargs,
         dataloader_kwargs=dataloader_kwargs,
-        min_saved_steps=5, # TODO
         device=DEVICE,
         exp_folder=exp_folder
     )
