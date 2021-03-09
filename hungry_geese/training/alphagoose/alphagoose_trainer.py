@@ -111,7 +111,8 @@ class AlphaGooseTrainer:
         dataloader = None
         for epoch in range(n_epochs):
             if epoch == 0 or len(dataset) != self.max_saved_steps:
-                while len(dataset) < self.max_saved_steps:
+                dataset = AlphaGooseDataset(**self.dataset_kwargs)
+                while len(dataset) < self.min_saved_steps:
                     dataset = AlphaGooseDataset(**self.dataset_kwargs)
                     if len(dataset) < self.min_saved_steps:
                         print(f'Only {len(dataset)} out of {self.min_saved_steps} minimum samples found. Sleeping...')
