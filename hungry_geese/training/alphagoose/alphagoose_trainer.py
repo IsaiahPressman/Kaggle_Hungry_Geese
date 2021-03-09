@@ -27,7 +27,7 @@ class AlphaGooseTrainer:
             lr_scheduler: torch.optim.lr_scheduler,
             dataset_kwargs: Dict,
             dataloader_kwargs: Dict,
-            min_saved_steps: int = 10000,
+            min_saved_steps: int = 100000,
             max_saved_steps: int = 1000000,
             policy_weight: float = 1.,
             value_weight: float = 1.,
@@ -111,7 +111,7 @@ class AlphaGooseTrainer:
         dataloader = None
         for epoch in range(n_epochs):
             if epoch == 0 or len(dataset) != self.max_saved_steps:
-                # Arbitrary minimum number of samples for training
+                dataset = AlphaGooseDataset(**self.dataset_kwargs)
                 while len(dataset) < self.min_saved_steps:
                     dataset = AlphaGooseDataset(**self.dataset_kwargs)
                     if len(dataset) < self.min_saved_steps:
@@ -177,7 +177,7 @@ class AlphaGooseTrainer:
 
             logits_masked = logits.view(-1, 4)[still_alive.view(-1, 1).expand(-1, 4)].view(-1, 4)
             policy_masked = search_policy.view(-1, 4)[still_alive.view(-1, 1).expand(-1, 4)].view(-1, 4)
-            policy_loss = torch.sum(policy_masked * F.log_softmax(logits_masked, dim=-1), dim=-1).mean()
+            policy_loss = -torch.sum(policy_masked * F.log_softmax(logits_masked, dim=-1), dim=-1).mean()
 
             value_masked = value.view(-1)[still_alive.view(-1)]
             result_masked = result.view(-1)[still_alive.view(-1)]
