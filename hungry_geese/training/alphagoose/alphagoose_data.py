@@ -15,9 +15,8 @@ class AlphaGooseDataset(Dataset):
                  root: Union[str, Path],
                  obs_type: ObsType,
                  transform: Optional[Callable] = None,
-                 include_episode: Optional[Callable] = None,
                  file_ext: str = '.json'):
-        self.episodes = [d for d in Path(root).glob('*') if d.is_dir() and include_episode(d)]
+        self.episodes = [d for d in Path(root).glob('*') if d.is_dir()]
         self.samples = [f for e in self.episodes for f in e.glob(f'*{file_ext}')]
         self.obs_type = obs_type
         self.transform = transform
@@ -34,7 +33,7 @@ class AlphaGooseDataset(Dataset):
         head_locs = []
         still_alive = []
         for agent_idx, agent in enumerate(step):
-            still_alive.append(agent['status'] == 'ACTIVE' and agent['next_action'] is not None)
+            still_alive.append(agent['status'] == 'ACTIVE')
             final_ranks.append(agent['final_rank'])
             if still_alive[-1]:
                 policies.append(np.array(agent['policy']))
@@ -65,6 +64,9 @@ class AlphaGoosePretrainDataset(Dataset):
                  transform: Optional[Callable] = None,
                  include_episode: Optional[Callable] = None,
                  file_ext: str = '.json'):
+        if include_episode is None:
+            def include_episode(_):
+                return True
         self.episodes = [d for d in Path(root).glob('*') if d.is_dir() and include_episode(d)]
         self.samples = [f for e in self.episodes for f in e.glob(f'*{file_ext}')]
         self.obs_type = obs_type
@@ -128,12 +130,12 @@ class AlphaGooseRandomReflect:
             if random.random() < 0.5:
                 state = np.flip(state, axis=-2)
                 actions = flip_policies(policies, 'rows')
-                new_head_locs = np.flip(new_head_locs, axis=-2,)
+                new_head_locs = np.flip(new_head_locs, axis=-2, )
             # Flip horizontally
             if random.random() < 0.5:
-                state = np.flip(state, axis=-1,)
+                state = np.flip(state, axis=-1, )
                 actions = flip_policies(policies, 'cols')
-                new_head_locs = np.flip(new_head_locs, axis=-1,)
+                new_head_locs = np.flip(new_head_locs, axis=-1, )
             head_locs = np.where(
                 still_alive,
                 new_head_locs.ravel()[head_locs.ravel()].reshape(head_locs.shape),
@@ -166,12 +168,12 @@ class PretrainRandomReflect:
             if random.random() < 0.5:
                 state = np.flip(state, axis=-2)
                 actions = flip_actions(actions, 'rows')
-                new_head_locs = np.flip(new_head_locs, axis=-2,)
+                new_head_locs = np.flip(new_head_locs, axis=-2, )
             # Flip horizontally
             if random.random() < 0.5:
-                state = np.flip(state, axis=-1,)
+                state = np.flip(state, axis=-1, )
                 actions = flip_actions(actions, 'cols')
-                new_head_locs = np.flip(new_head_locs, axis=-1,)
+                new_head_locs = np.flip(new_head_locs, axis=-1, )
             head_locs = np.where(
                 still_alive,
                 new_head_locs.ravel()[head_locs.ravel()].reshape(head_locs.shape),
@@ -186,6 +188,7 @@ class ToTensor:
     """
     Given a tuple of (state, actions, ranks_rescaled, head_locs, still_alive) arrays, convert them to pytorch tensors
     """
+
     def __call__(
             self,
             sample: Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]
@@ -236,4 +239,3 @@ def flip_actions(actions: np.ndarray, flipped_rows_or_cols: str) -> np.ndarray:
     else:
         raise ValueError(f'Unrecognized flipped_rows_or_cols value: {flipped_rows_or_cols}')
     return flipped_actions
-

@@ -113,11 +113,11 @@ class DeepQ:
                 r = torch.from_numpy(r)
                 done = torch.from_numpy(done)
                 self.replay_buffer.append_samples_batch(
-                    s[still_playing_mask].reshape(-1, *s.shape[-3:]).lightweight_clone(),
-                    a[still_playing_mask].reshape(-1).lightweight_clone(),
-                    r[still_playing_mask].reshape(-1).lightweight_clone(),
-                    done[still_playing_mask].reshape(-1).lightweight_clone(),
-                    next_s[still_playing_mask].reshape(-1, *next_s.shape[-3:]).lightweight_clone()
+                    s[still_playing_mask].reshape(-1, *s.shape[-3:]).clone(),
+                    a[still_playing_mask].reshape(-1).clone(),
+                    r[still_playing_mask].reshape(-1).clone(),
+                    done[still_playing_mask].reshape(-1).clone(),
+                    next_s[still_playing_mask].reshape(-1, *next_s.shape[-3:]).clone()
                 )
                 if epsilon_expanded is not None:
                     for eps_idx, eps in enumerate(epsilon.view(-1)):
@@ -215,7 +215,7 @@ class DeepQ:
             if param.requires_grad:
                 self.summary_writer.add_histogram(
                     f'Parameters/{name}',
-                    param.detach().cpu().lightweight_clone().numpy(),
+                    param.detach().cpu().clone().numpy(),
                     int(self.epoch_counter / self.checkpoint_freq)
                 )
         checkpoint_dir = self.exp_folder / f'{self.epoch_counter:04}'
@@ -255,7 +255,7 @@ class DeepQ:
                                                    (time.time() - start_time) * 1000,
                                                    self.validation_step_counters[i])
                     self.validation_step_counters[i] += 1
-                episode_reward_sums[-1] = episode_reward_sums[-1].mean(dim=-1).cpu().lightweight_clone() / val_env.r_norm
+                episode_reward_sums[-1] = episode_reward_sums[-1].mean(dim=-1).cpu().clone() / val_env.r_norm
                 final_info_dicts.append(info_dict)
             self.log_validation_episodes(
                 episode_reward_sums,

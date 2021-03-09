@@ -241,7 +241,7 @@ class SupervisedPretraining:
             if param.requires_grad:
                 self.summary_writer.add_histogram(
                     f'Parameters/{name}',
-                    param.detach().cpu().lightweight_clone().numpy(),
+                    param.detach().cpu().clone().numpy(),
                     self.epoch_counter // self.checkpoint_freq
                 )
         checkpoint_dir = self.exp_folder / f'{self.epoch_counter:04}'

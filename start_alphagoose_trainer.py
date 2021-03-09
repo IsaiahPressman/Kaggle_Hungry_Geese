@@ -1,14 +1,17 @@
-import base64
 from pathlib import Path
-import pickle
 import torch
 from torch import nn
+from torchvision import transforms
 
-from hungry_geese.training.alphagoose.alphagoose_data_generator import multiprocess_alphagoose_data_generator
+from hungry_geese.training.alphagoose.alphagoose_trainer import AlphaGooseTrainer
+from hungry_geese.training.alphagoose.alphagoose_data import AlphaGooseRandomReflect, ToTensor
 from hungry_geese.env import goose_env as ge
 from hungry_geese import models
+from hungry_geese.utils import format_experiment_name
 
 if __name__ == '__main__':
+    DEVICE = torch.device('cuda')
+
     obs_type = ge.ObsType.COMBINED_GRADIENT_OBS
     n_channels = 128
     activation = nn.ReLU
@@ -39,20 +42,57 @@ if __name__ == '__main__':
         ],
         squeeze_excitation=True,
         cross_normalize_value=True,
-        # **ge.RewardType.RANK_ON_DEATH.get_recommended_value_activation_scale_shift_dict()
     )
-
-    weights_dir = Path('runs/alphagoose/alphagoose_combined_gradient_obs_rank_on_death_none_3_blocks_128_dims_v1')
-
-    multiprocess_alphagoose_data_generator(
-        n_workers=5,
-        device=torch.device('cuda'),
-        data_dir=Path('/home/isaiah/data/alphagoose_data'),
-        max_saved_steps=int(1e6),
-        model_kwargs=model_kwargs,
-        n_envs_per_worker=20,
-        weights_dir=weights_dir,
+    model = models.FullConvActorCriticNetwork(**model_kwargs)
+    model.to(device=DEVICE)
+    optimizer = torch.optim.SGD(
+        model.parameters(),
+        lr=0.02,
+        momentum=0.9,
+        weight_decay=1e-4
+    )
+    # NB: lr_scheduler counts steps in batches, not epochs
+    lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(
+        optimizer,
+        # Stop reducing LR beyond 2e-4
+        milestones=[200000 * i for i in range(2, 4)],
+        gamma=0.1
+    )
+    dataset_kwargs = dict(
+        root='/home/isaiah/data/alphagoose_data/',
         obs_type=obs_type,
-        model_reload_freq=100,
-        n_iter=100,
+        transform=transforms.Compose([
+            AlphaGooseRandomReflect(obs_type),
+            ToTensor()
+        ]),
     )
+    dataloader_kwargs = dict(
+        batch_size=512,
+        shuffle=True,
+        num_workers=0,
+        pin_memory=True
+    )
+
+    experiment_name = 'alphagoose_' + format_experiment_name(obs_type,
+                                                             ge.RewardType.RANK_ON_DEATH,
+                                                             ge.ActionMasking.LETHAL,
+                                                             [n_channels],
+                                                             model_kwargs['conv_block_kwargs']) + '_v1'
+    exp_folder = Path(f'runs/alphagoose/{experiment_name}')
+    train_alg = AlphaGooseTrainer(
+        model=model,
+        optimizer=optimizer,
+        lr_scheduler=lr_scheduler,
+        dataset_kwargs=dataset_kwargs,
+        dataloader_kwargs=dataloader_kwargs,
+        min_saved_steps=5, # TODO
+        device=DEVICE,
+        exp_folder=exp_folder
+    )
+
+    try:
+        train_alg.train(n_epochs=int(1e7))
+    except KeyboardInterrupt:
+        if train_alg.epoch_counter > train_alg.checkpoint_freq:
+            print('KeyboardInterrupt: saving model')
+            train_alg.save(train_alg.exp_folder, finished=True)

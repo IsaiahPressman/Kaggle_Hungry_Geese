@@ -19,6 +19,7 @@ if __name__ == '__main__':
     obs_type = ge.ObsType.COMBINED_GRADIENT_OBS
     n_channels = 128
     activation = nn.ReLU
+    normalize = True
     model_kwargs = dict(
         block_class=models.BasicConvolutionalBlock,
         conv_block_kwargs=[
@@ -27,21 +28,21 @@ if __name__ == '__main__':
                 out_channels=n_channels,
                 kernel_size=3,
                 activation=activation,
-                normalize=False
+                normalize=normalize
             ),
             dict(
                 in_channels=n_channels,
                 out_channels=n_channels,
                 kernel_size=3,
                 activation=activation,
-                normalize=False
+                normalize=normalize
             ),
             dict(
                 in_channels=n_channels,
                 out_channels=n_channels,
                 kernel_size=3,
                 activation=activation,
-                normalize=False
+                normalize=normalize
             ),
         ],
         squeeze_excitation=True,
@@ -60,7 +61,7 @@ if __name__ == '__main__':
     model.to(device=DEVICE)
     optimizer = torch.optim.SGD(
         model.parameters(),
-        lr=0.01,
+        lr=0.1,
         momentum=0.9,
         weight_decay=1e-4
     )
@@ -101,14 +102,14 @@ if __name__ == '__main__':
         shuffle=True,
         pin_memory=True
     )
-    train_dataloader = DataLoader(train_dataset, num_workers=0, **dataloader_kwargs)
+    train_dataloader = DataLoader(train_dataset, num_workers=6, **dataloader_kwargs)
     test_dataloader = DataLoader(test_dataset, num_workers=10, **dataloader_kwargs)
 
     experiment_name = 'supervised_pretraining_' + format_experiment_name(obs_type,
                                                                          ge.RewardType.RANK_ON_DEATH,
                                                                          ge.ActionMasking.NONE,
                                                                          [n_channels],
-                                                                         model_kwargs['conv_block_kwargs']) + '_TEMP'
+                                                                         model_kwargs['conv_block_kwargs']) + '_v5'
     exp_folder = Path(f'runs/supervised_pretraining/active/{experiment_name}')
     train_alg = SupervisedPretraining(
         model=model,

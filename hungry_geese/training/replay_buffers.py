@@ -35,11 +35,11 @@ class BasicReplayBuffer:
         idxs = torch.randint(self.current_size, size=(sample_size,))
         # Sampling without replacement is possible, but quite a bit slower:
         # idxs = np.random.choice(self.current_size, size=sample_size, replace=(self.current_size < sample_size))
-        return (self._s_buffer[idxs].lightweight_clone(),
-                self._a_buffer[idxs].lightweight_clone(),
-                self._r_buffer[idxs].lightweight_clone(),
-                self._d_buffer[idxs].lightweight_clone(),
-                self._next_s_buffer[idxs].lightweight_clone())
+        return (self._s_buffer[idxs].clone(),
+                self._a_buffer[idxs].clone(),
+                self._r_buffer[idxs].clone(),
+                self._d_buffer[idxs].clone(),
+                self._next_s_buffer[idxs].clone())
 
     def append_samples_batch(self,
                              s_batch: torch.Tensor,

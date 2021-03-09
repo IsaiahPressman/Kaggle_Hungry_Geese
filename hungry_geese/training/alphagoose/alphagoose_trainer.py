@@ -27,7 +27,8 @@ class AlphaGooseTrainer:
             lr_scheduler: torch.optim.lr_scheduler,
             dataset_kwargs: Dict,
             dataloader_kwargs: Dict,
-            max_saved_steps: int,
+            min_saved_steps: int = 10000,
+            max_saved_steps: int = 1000000,
             policy_weight: float = 1.,
             value_weight: float = 1.,
             device: torch.device = torch.device('cuda'),
@@ -43,7 +44,9 @@ class AlphaGooseTrainer:
         self.lr_scheduler = lr_scheduler
         self.dataset_kwargs = dataset_kwargs
         self.dataloader_kwargs = dataloader_kwargs
+        self.min_saved_steps = min_saved_steps
         self.max_saved_steps = max_saved_steps
+        assert self.min_saved_steps < self.max_saved_steps
         self.policy_weight = policy_weight
         assert self.policy_weight >= 0.
         self.value_weight = value_weight
@@ -52,15 +55,18 @@ class AlphaGooseTrainer:
         self.use_mixed_precision = use_mixed_precision
         self.grad_scaler = grad_scaler
         self.exp_folder = exp_folder.absolute()
+        self.pt_weights_dir = self.exp_folder / 'all_checkpoints_pt'
+        if not self.exp_folder.exists():
+            raise FileNotFoundError(f'{self.exp_folder} does not exist')
         starting_weights_path = self.exp_folder / 'starting_weights.txt'
         if not starting_weights_path.exists():
             raise FileNotFoundError(f'{starting_weights_path} does not exist')
         else:
-            if (self.exp_folder / '0.pt').exists():
-                raise RuntimeError(f'{self.exp_folder} already has checkpoints in it')
+            if len(list(self.pt_weights_dir.glob('*.pt'))) > 1:
+                raise RuntimeError(f'{self.pt_weights_dir} already has checkpoints in it')
             else:
                 print(f'Saving results to {self.exp_folder}')
-        self.pt_weights_dir = self.exp_folder / 'all_checkpoints_pt'
+        self.pt_weights_dir.mkdir(exist_ok=True)
         self.checkpoint_freq = checkpoint_freq
         self.checkpoint_render_n_games = checkpoint_render_n_games
         if self.checkpoint_render_n_games > 0:
@@ -82,9 +88,11 @@ class AlphaGooseTrainer:
             serialized_string = f.readline()[2:-1].encode()
         state_dict_bytes = base64.b64decode(serialized_string)
         loaded_state_dicts = pickle.loads(state_dict_bytes)
+        model.cpu()
         model.load_state_dict(loaded_state_dicts)
         # This is where the alphagoose_data_generators will find the model weights
-        torch.save(model.state_dict(), self.exp_folder / f'0.pt')
+        torch.save(model.state_dict(), self.pt_weights_dir / f'0.pt')
+        model.to(device=self.device)
 
         dummy_state = torch.zeros(dataset_kwargs['obs_type'].get_obs_spec()[1:])
         dummy_head_loc = torch.arange(4).to(dtype=torch.int64)
@@ -104,10 +112,10 @@ class AlphaGooseTrainer:
         for epoch in range(n_epochs):
             if epoch == 0 or len(dataset) != self.max_saved_steps:
                 # Arbitrary minimum number of samples for training
-                while len(dataset) < 10000:
+                while len(dataset) < self.min_saved_steps:
                     dataset = AlphaGooseDataset(**self.dataset_kwargs)
-                    if len(dataset) < 10000:
-                        print(f'Only {len(dataset)} out of {10000} minimum samples found. Sleeping...')
+                    if len(dataset) < self.min_saved_steps:
+                        print(f'Only {len(dataset)} out of {self.min_saved_steps} minimum samples found. Sleeping...')
                         time.sleep(20.)
                 dataloader = DataLoader(dataset, **self.dataloader_kwargs)
             epoch_start_time = time.time()
@@ -120,8 +128,7 @@ class AlphaGooseTrainer:
             for train_tuple in tqdm(dataloader, desc=f'Epoch #{epoch} train'):
                 self.optimizer.zero_grad()
                 policy_loss, value_loss, combined_loss = self.compute_losses(
-                    *[t.to(device=self.device, non_blocking=True) for t in train_tuple],
-                    reduction='mean'
+                    *[t.to(device=self.device, non_blocking=True) for t in train_tuple]
                 )
                 if self.use_mixed_precision:
                     self.grad_scaler.scale(combined_loss).backward()
@@ -160,22 +167,21 @@ class AlphaGooseTrainer:
     def compute_losses(
             self,
             state: torch.Tensor,
-            action: torch.Tensor,
+            search_policy: torch.Tensor,
             result: torch.Tensor,
             head_locs: torch.Tensor,
-            still_alive: torch.Tensor,
-            reduction: str = 'mean'
+            still_alive: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         with amp.autocast(enabled=self.use_mixed_precision):
             logits, value = self.model(state, head_locs, still_alive)
 
             logits_masked = logits.view(-1, 4)[still_alive.view(-1, 1).expand(-1, 4)].view(-1, 4)
-            action_masked = action.view(-1)[still_alive.view(-1)]
-            policy_loss = F.cross_entropy(logits_masked, action_masked, reduction=reduction)
+            policy_masked = search_policy.view(-1, 4)[still_alive.view(-1, 1).expand(-1, 4)].view(-1, 4)
+            policy_loss = torch.sum(policy_masked * F.log_softmax(logits_masked, dim=-1), dim=-1).mean()
 
             value_masked = value.view(-1)[still_alive.view(-1)]
             result_masked = result.view(-1)[still_alive.view(-1)]
-            value_loss = F.mse_loss(value_masked, result_masked, reduction=reduction)
+            value_loss = F.mse_loss(value_masked, result_masked)
 
             combined_loss = (self.policy_weight * policy_loss +
                              self.value_weight * value_loss)
@@ -203,7 +209,7 @@ class AlphaGooseTrainer:
             if param.requires_grad:
                 self.summary_writer.add_histogram(
                     f'Parameters/{name}',
-                    param.detach().cpu().lightweight_clone().numpy(),
+                    param.detach().cpu().clone().numpy(),
                     self.epoch_counter // self.checkpoint_freq
                 )
         checkpoint_dir = self.exp_folder / f'{self.epoch_counter:04}'

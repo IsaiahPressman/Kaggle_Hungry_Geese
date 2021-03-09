@@ -124,8 +124,8 @@ def save_episode_steps(
     agent_rankings = stats.rankdata(game_score, method='average') - 1.
     for step_idx, step in enumerate(env.steps[:-1]):
         for agent_idx, agent in enumerate(step):
+            agent['final_rank'] = agent_rankings[agent_idx]
             if agent['status'] == 'ACTIVE':
-                agent['final_rank'] = agent_rankings[agent_idx]
                 agent['policy'] = list(post_search_policies[step_idx][agent_idx])
         with open(worker_data_dir / f'{int(n_saved_steps)}.json', 'w') as f:
             json.dump(step, f)
@@ -133,14 +133,11 @@ def save_episode_steps(
     return n_saved_steps
 
 
-def get_most_recent_weights_file(weights_dir: Path) -> Optional[Path]:
+def get_most_recent_weights_file(weights_dir: Path) -> Path:
     all_weight_files = list(weights_dir.glob('*.pt'))
     all_weight_files.sort(key=lambda f: int(f.stem))
 
-    if len(all_weight_files) > 0:
-        return all_weight_files[-1]
-    else:
-        return None
+    return all_weight_files[-1]
 
 
 def multiprocess_alphagoose_data_generator(
@@ -155,7 +152,7 @@ def multiprocess_alphagoose_data_generator(
     if data_dir.exists() and any(Path(data_dir).iterdir()):
         raise RuntimeError(f'data_dir already exists and is not empty: {data_dir}')
     else:
-        data_dir.mkdir()
+        data_dir.mkdir(exist_ok=True)
     assert max_saved_steps % n_workers == 0
 
     processes = []
