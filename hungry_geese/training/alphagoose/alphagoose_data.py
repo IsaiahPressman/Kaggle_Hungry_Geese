@@ -30,6 +30,7 @@ class AlphaGooseDataset(Dataset):
             # Try and reread the file up to 10 times if an error occurs
             try:
                 step = read_json(self.samples[index])
+                break
             except TypeError:
                 time.sleep(0.2)
         # If the error keeps happening, allow it to be raised and halt the process
