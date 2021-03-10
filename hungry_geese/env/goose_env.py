@@ -23,7 +23,7 @@ class ObsType(Enum):
     HEAD_CENTERED_SET_OBS = auto()
     SET_OBS = auto()
 
-    def get_obs_spec(self, n_players: int = 4) -> Tuple[int, ...]:
+    def get_obs_spec(self, n_players: int = N_PLAYERS) -> Tuple[int, ...]:
         if self == ObsType.COMBINED_GRADIENT_OBS:
             return -1, 3 + 2 * n_players, N_ROWS, N_COLS
         elif self == ObsType.COMBINED_OBS_SMALL:
@@ -113,7 +113,7 @@ def _get_direction(from_position: int, to_position: int) -> str:
 class VectorizedEnv:
     def __init__(self, obs_type: Union[ObsType, Sequence[ObsType]], reward_type: RewardType,
                  action_masking: ActionMasking = ActionMasking.OPPOSITE,
-                 n_envs: int = 1, n_players: int = 4, silent_reset: bool = True, make_fn=make):
+                 n_envs: int = 1, n_players: int = N_PLAYERS, silent_reset: bool = True, make_fn=make):
         self.obs_type = obs_type
         self.reward_type = reward_type
         self.action_masking = action_masking

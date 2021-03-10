@@ -5,6 +5,8 @@ import numpy as np
 from random import sample
 from typing import *
 
+from ..config import N_PLAYERS
+
 
 ACTIONS_TUPLE = tuple(Action)
 
@@ -29,7 +31,7 @@ class LightweightEnv:
 
         self.reset()
 
-    def reset(self, num_agents: int = 4) -> List[Dict]:
+    def reset(self, num_agents: int = N_PLAYERS) -> List[Dict]:
         self.agent_count = num_agents
         heads = sample(range(self.n_cols * self.n_rows), self.agent_count)
         self.geese = [[head] for head in heads]

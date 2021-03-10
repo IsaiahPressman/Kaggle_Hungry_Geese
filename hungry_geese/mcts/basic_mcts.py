@@ -145,6 +145,7 @@ class BasicMCTS:
             actor_critic_func: Callable,
             terminal_value_func: Callable,
             c_puct: float = 1.,
+            add_noise: bool = False,
             noise_val: float = 2.,
             noise_weight: float = 0.25,
             include_food: bool = True,
@@ -153,6 +154,7 @@ class BasicMCTS:
         self.actor_critic_func = actor_critic_func
         self.terminal_value_func = terminal_value_func
         self.c_puct = c_puct
+        self.add_noise = add_noise
         self.noise_val = noise_val
         self.noise_weight = noise_weight
         self.include_food = include_food
@@ -233,8 +235,7 @@ class BasicMCTS:
             policy_est: Optional[np.ndarray],
             value_est: np.ndarray,
             still_alive: List[bool],
-            available_actions: np.ndarray,
-            add_noise: bool = False
+            available_actions: np.ndarray
     ):
         for i, (s, a) in enumerate(trajectory):
             if a is not None:
@@ -242,7 +243,7 @@ class BasicMCTS:
                 node.update(a, value_est)
             else:
                 # Noise should only be added to the root node
-                if add_noise and i == 0:
+                if self.add_noise and i == 0:
                     noise = np.random.dirichlet(np.zeros(4) + self.noise_val, size=(policy_est.shape[0],))
                     policy_est = (1. - self.noise_weight) * policy_est + self.noise_weight * noise
                 self.nodes[s] = Node(
@@ -256,14 +257,13 @@ class BasicMCTS:
             self,
             env: LightweightEnv,
             n_iter: int,
-            max_time: float = float('inf'),
-            add_noise: bool = False
+            max_time: float = float('inf')
     ) -> Node:
         start_time = time.time()
         for _ in range(n_iter):
             if time.time() - start_time >= max_time:
                 break
-            self._search(env.lightweight_clone(), add_noise=add_noise)
+            self._search(env.lightweight_clone(), add_noise=self.add_noise)
 
         return self.get_root_node(env)
 

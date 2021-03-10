@@ -1,7 +1,6 @@
 import copy
 import json
 import torch.multiprocessing as mp
-from itertools import cycle
 import numpy as np
 import os
 from pathlib import Path
@@ -80,8 +79,7 @@ def alphagoose_data_generator_worker(
                     backprop_kwargs = dict(
                         trajectory=trajectory_batch[idx],
                         still_alive=still_alive_batch[idx],
-                        available_actions=available_actions_batch[idx],
-                        add_noise=True
+                        available_actions=available_actions_batch[idx]
                     )
                     if done_batch[idx]:
                         search_tree.backpropagate(

@@ -15,6 +15,7 @@ from typing import *
 import warnings
 
 from .alphagoose_data import AlphaGooseDataset
+from ...config import *
 from ...models import FullConvActorCriticNetwork
 from ...env import goose_env as ge
 
@@ -27,7 +28,7 @@ class AlphaGooseTrainer:
             lr_scheduler: torch.optim.lr_scheduler,
             dataset_kwargs: Dict,
             dataloader_kwargs: Dict,
-            min_saved_steps: int = 50000,
+            min_saved_steps: int = 500000,
             max_saved_steps: int = 1000000,
             policy_weight: float = 1.,
             value_weight: float = 1.,
@@ -35,6 +36,7 @@ class AlphaGooseTrainer:
             use_mixed_precision: bool = True,
             grad_scaler: amp.grad_scaler = amp.GradScaler(),
             exp_folder: Path = Path('runs/alphagoose/TEMP'),
+            start_from_scratch: bool = False,
             checkpoint_freq: int = 10,
             checkpoint_render_n_games: int = 10
     ):
@@ -59,13 +61,12 @@ class AlphaGooseTrainer:
         if not self.exp_folder.exists():
             raise FileNotFoundError(f'{self.exp_folder} does not exist')
         starting_weights_path = self.exp_folder / 'starting_weights.txt'
-        if not starting_weights_path.exists():
+        if not starting_weights_path.exists() and not start_from_scratch:
             raise FileNotFoundError(f'{starting_weights_path} does not exist')
+        if len(list(self.pt_weights_dir.glob('*.pt'))) > 1:
+            raise RuntimeError(f'{self.pt_weights_dir} already has checkpoints in it')
         else:
-            if len(list(self.pt_weights_dir.glob('*.pt'))) > 1:
-                raise RuntimeError(f'{self.pt_weights_dir} already has checkpoints in it')
-            else:
-                print(f'Saving results to {self.exp_folder}')
+            print(f'Saving results to {self.exp_folder}')
         self.pt_weights_dir.mkdir(exist_ok=True)
         self.checkpoint_freq = checkpoint_freq
         self.checkpoint_render_n_games = checkpoint_render_n_games
@@ -84,12 +85,14 @@ class AlphaGooseTrainer:
         self.epoch_counter = 0
         self.summary_writer = SummaryWriter(str(self.exp_folder))
 
-        with open(starting_weights_path, 'r') as f:
-            serialized_string = f.readline()[2:-1].encode()
-        state_dict_bytes = base64.b64decode(serialized_string)
-        loaded_state_dicts = pickle.loads(state_dict_bytes)
+        if not start_from_scratch:
+            with open(starting_weights_path, 'r') as f:
+                serialized_string = f.readline()[2:-1].encode()
+            state_dict_bytes = base64.b64decode(serialized_string)
+            loaded_state_dicts = pickle.loads(state_dict_bytes)
+            model.cpu()
+            model.load_state_dict(loaded_state_dicts)
         model.cpu()
-        model.load_state_dict(loaded_state_dicts)
         # This is where the alphagoose_data_generators will find the model weights
         torch.save(model.state_dict(), self.pt_weights_dir / f'0.pt')
         model.to(device=self.device)
