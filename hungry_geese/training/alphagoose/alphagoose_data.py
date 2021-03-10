@@ -25,7 +25,17 @@ class AlphaGooseDataset(Dataset):
                              'they will need different data concatenation')
 
     def __getitem__(self, index: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        step = read_json(self.samples[index])
+        step = None
+        for i in range(10):
+            # Try and reread the file up to 10 times if an error occurs
+            try:
+                step = read_json(self.samples[index])
+                break
+            except:
+                time.sleep(0.2)
+        # If the error keeps happening, allow it to be raised and halt the process
+        if step is None:
+            step = read_json(self.samples[index])
 
         state = create_obs_tensor(step, self.obs_type)
         policies = []
