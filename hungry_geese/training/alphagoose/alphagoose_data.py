@@ -130,12 +130,12 @@ class AlphaGooseRandomReflect:
             if random.random() < 0.5:
                 state = np.flip(state, axis=-2)
                 policies = flip_policies(policies, 'rows')
-                new_head_locs = np.flip(new_head_locs, axis=-2, )
+                new_head_locs = np.flip(new_head_locs, axis=-2)
             # Flip horizontally
             if random.random() < 0.5:
-                state = np.flip(state, axis=-1, )
+                state = np.flip(state, axis=-1)
                 policies = flip_policies(policies, 'cols')
-                new_head_locs = np.flip(new_head_locs, axis=-1, )
+                new_head_locs = np.flip(new_head_locs, axis=-1)
             head_locs = np.where(
                 still_alive,
                 new_head_locs.ravel()[head_locs.ravel()].reshape(head_locs.shape),
