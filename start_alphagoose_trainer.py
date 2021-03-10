@@ -69,7 +69,7 @@ if __name__ == '__main__':
     dataloader_kwargs = dict(
         batch_size=512,
         shuffle=True,
-        num_workers=4,
+        num_workers=0,
         pin_memory=True
     )
 
@@ -86,7 +86,8 @@ if __name__ == '__main__':
         dataset_kwargs=dataset_kwargs,
         dataloader_kwargs=dataloader_kwargs,
         device=DEVICE,
-        exp_folder=exp_folder
+        exp_folder=exp_folder,
+        # min_saved_steps=1000,
     )
 
     try:

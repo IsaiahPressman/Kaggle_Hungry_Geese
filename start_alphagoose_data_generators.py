@@ -3,6 +3,7 @@ import torch
 from torch import nn
 
 from hungry_geese.training.alphagoose import alphagoose_data_generator as adg
+from hungry_geese.config import *
 from hungry_geese.env import goose_env as ge
 from hungry_geese import models
 
@@ -48,7 +49,7 @@ if __name__ == '__main__':
     print(f'Loading initial model weights from: {adg.get_most_recent_weights_file(weights_dir)}')
 
     adg.multiprocess_alphagoose_data_generator(
-        n_workers=2,
+        n_workers=5,
         device=DEVICE,
         data_dir=Path('/home/isaiah/data/alphagoose_data'),
         max_saved_steps=int(1e6),
@@ -57,7 +58,8 @@ if __name__ == '__main__':
         weights_dir=weights_dir,
         obs_type=obs_type,
         model_reload_freq=100,
-        n_iter=100,
+        n_iter=50,
         include_food=False,
+        add_noise=False,
         noise_val=1.,
     )
