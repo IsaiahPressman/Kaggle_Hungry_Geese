@@ -42,6 +42,7 @@ def alphagoose_data_generator_worker(
         terminal_value_func=terminal_value_func,
         **mcts_kwargs
     ) for _ in range(n_envs_per_worker)]
+    pre_search_policies = [[] for _ in range(n_envs_per_worker)]
     post_search_policies = [[] for _ in range(n_envs_per_worker)]
     # Create model and load weights
     model = FullConvActorCriticNetwork(**model_kwargs)
@@ -59,6 +60,7 @@ def alphagoose_data_generator_worker(
                     save_start_time = time.time()
                     n_saved_steps = save_episode_steps(
                         env,
+                        pre_search_policies[env_idx],
                         post_search_policies[env_idx],
                         worker_data_dir,
                         n_saved_steps,
@@ -66,6 +68,7 @@ def alphagoose_data_generator_worker(
                     )
                     print(f'{worker_id}: Saved train examples in {time.time() - save_start_time:.2} seconds')
                     env.reset()
+                    pre_search_policies[env_idx] = []
                     post_search_policies[env_idx] = []
             step_start_time = time.time()
             # n_iter + 1 because the first iteration creates the root node
@@ -93,9 +96,12 @@ def alphagoose_data_generator_worker(
                             value_est=values_batch[idx],
                             **backprop_kwargs
                         )
-            for idx, (env, search_tree, policy_list) in enumerate(zip(envs, search_trees, post_search_policies)):
+            for idx, (env, search_tree, pre_policy_list, post_policy_list) in enumerate(zip(
+                    envs, search_trees, pre_search_policies, post_search_policies
+            )):
                 root_node = search_tree.get_root_node(env)
-                policy_list.append(root_node.get_improved_policies(temp=1.))
+                pre_policy_list.append(root_node.initial_policies)
+                post_policy_list.append(root_node.get_improved_policies(temp=1.))
                 actions = root_node.get_improved_actions(temp=0.)
                 env.step(actions)
                 search_tree.reset()
@@ -112,6 +118,7 @@ def alphagoose_data_generator_worker(
 
 def save_episode_steps(
         env: LightweightEnv,
+        pre_search_policies: List[np.ndarray],
         post_search_policies: List[np.ndarray],
         worker_data_dir: Path,
         n_saved_steps: int,
@@ -124,6 +131,7 @@ def save_episode_steps(
         for agent_idx, agent in enumerate(step):
             agent['final_rank'] = agent_rankings[agent_idx]
             if agent['status'] == 'ACTIVE':
+                agent['initial_policy'] = list(pre_search_policies[step_idx][agent_idx])
                 agent['policy'] = list(post_search_policies[step_idx][agent_idx])
         with open(worker_data_dir / f'{int(n_saved_steps)}.json', 'w') as f:
             json.dump(step, f)

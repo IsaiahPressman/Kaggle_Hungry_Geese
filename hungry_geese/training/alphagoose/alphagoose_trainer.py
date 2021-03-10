@@ -1,6 +1,7 @@
 import base64
 from kaggle_environments import make
 import numpy as np
+import os
 from pathlib import Path
 import pickle
 import time
@@ -15,7 +16,6 @@ from typing import *
 import warnings
 
 from .alphagoose_data import AlphaGooseDataset
-from ...config import *
 from ...models import FullConvActorCriticNetwork
 from ...env import goose_env as ge
 
@@ -83,6 +83,9 @@ class AlphaGooseTrainer:
             self.rendering_env_kwargs = None
 
         self.epoch_counter = 0
+        existing_tf_events = list(self.exp_folder.glob('*.tfevents.*'))
+        for tf_event in existing_tf_events:
+            os.remove(tf_event)
         self.summary_writer = SummaryWriter(str(self.exp_folder))
 
         if not start_from_scratch:
