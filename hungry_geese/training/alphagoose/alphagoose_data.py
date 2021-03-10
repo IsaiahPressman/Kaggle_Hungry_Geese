@@ -31,7 +31,7 @@ class AlphaGooseDataset(Dataset):
             try:
                 step = read_json(self.samples[index])
                 break
-            except TypeError:
+            except:
                 time.sleep(0.2)
         # If the error keeps happening, allow it to be raised and halt the process
         if step is None:
