@@ -69,7 +69,7 @@ if __name__ == '__main__':
     dataloader_kwargs = dict(
         batch_size=512,
         shuffle=True,
-        num_workers=0,
+        num_workers=2,
         pin_memory=True
     )
 
@@ -89,6 +89,8 @@ if __name__ == '__main__':
         use_mixed_precision=False,
         exp_folder=exp_folder,
         min_saved_steps=1000,
+        checkpoint_freq=5,
+        checkpoint_render_n_games=5,
     )
 
     try:
