@@ -1,4 +1,5 @@
 from kaggle_environments.envs.hungry_geese.hungry_geese import Action
+from json import JSONDecodeError
 import numpy as np
 from pathlib import Path
 import random
@@ -32,7 +33,8 @@ class AlphaGooseDataset(Dataset):
             try:
                 step = read_json(self.samples[index])
                 break
-            except:
+            # Sometimes, this error occurs when the train sample is written to at the same time as it is being read
+            except JSONDecodeError:
                 time.sleep(0.2)
         # If the error keeps happening, allow it to be raised and halt the process
         if step is None:
