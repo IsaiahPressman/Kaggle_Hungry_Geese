@@ -83,6 +83,7 @@ class AlphaGooseTrainer:
             self.rendering_env_kwargs = None
 
         self.epoch_counter = 0
+        self.batch_counter = 0
         existing_tf_events = list(self.exp_folder.glob('*.tfevents.*'))
         for tf_event in existing_tf_events:
             os.remove(tf_event)
@@ -150,6 +151,7 @@ class AlphaGooseTrainer:
                 train_metrics['policy_loss'].append(policy_loss.detach().cpu().item())
                 train_metrics['value_loss'].append(value_loss.detach().cpu().item())
                 train_metrics['combined_loss'].append(combined_loss.detach().cpu().item())
+                self.batch_counter += 1
             self.log_train(train_metrics, len(dataloader))
 
             if self.epoch_counter % self.checkpoint_freq == 0 and self.epoch_counter > 0:
@@ -172,22 +174,45 @@ class AlphaGooseTrainer:
 
     def compute_losses(
             self,
-            state: torch.Tensor,
-            search_policy: torch.Tensor,
-            result: torch.Tensor,
-            head_locs: torch.Tensor,
-            still_alive: torch.Tensor
+            state: torch.FloatTensor,
+            search_policy: torch.FloatTensor,
+            available_actions_masks: torch.BoolTensor,
+            result: torch.FloatTensor,
+            head_locs: torch.LongTensor,
+            still_alive: torch.BoolTensor
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         with amp.autocast(enabled=self.use_mixed_precision):
             logits, value = self.model(state, head_locs, still_alive)
 
-            logits_masked = logits.view(-1, 4)[still_alive.view(-1, 1).expand(-1, 4)].view(-1, 4)
-            policy_masked = search_policy.view(-1, 4)[still_alive.view(-1, 1).expand(-1, 4)].view(-1, 4)
-            policy_loss = -torch.sum(policy_masked * F.log_softmax(logits_masked, dim=-1), dim=-1).mean()
+            still_alive_expanded = still_alive.view(-1, 1).expand(-1, 4)
+            logits = logits.view(-1, 4)[still_alive_expanded].view(-1, 4)
+            search_policy = search_policy.view(-1, 4)[still_alive_expanded].view(-1, 4)
+            """
+            available_actions_masks = available_actions_masks.view(-1, 4)[still_alive_expanded].view(-1, 4)
+            # Mask and renormalize policy
+            probs_masked = F.softmax(logits, dim=-1) * available_actions_masks
+            if torch.any(probs_masked.sum(dim=-1) == 0):
+                print(f'WARNING: All available actions have 0% probability for '
+                      f'{torch.sum(probs_masked.sum(dim=-1) == 0)}/{probs_masked.shape[0]} rows')
+            probs_masked = torch.where(
+                probs_masked.sum(dim=-1, keepdim=True) > 0,
+                probs_masked,
+                torch.ones_like(probs_masked)
+            )
+            probs_masked = probs_masked / probs_masked.sum(dim=-1, keepdim=True)
+            policy_loss = -torch.sum(torch.where(
+                available_actions_masks,
+                search_policy * torch.log(probs_masked),
+                torch.zeros_like(search_policy)
+            ), dim=-1).mean()
+            """
+            policy_loss = -torch.sum(search_policy * F.log_softmax(logits, dim=-1), dim=-1).mean()
+            if policy_loss.cpu().item() > 1.:
+                print(logits, search_policy, F.log_softmax(logits, dim=-1))
 
-            value_masked = value.view(-1)[still_alive.view(-1)]
-            result_masked = result.view(-1)[still_alive.view(-1)]
-            value_loss = F.mse_loss(value_masked, result_masked)
+            value = value.view(-1)[still_alive.view(-1)]
+            result = result.view(-1)[still_alive.view(-1)]
+            value_loss = F.mse_loss(value, result)
 
             combined_loss = (self.policy_weight * policy_loss +
                              self.value_weight * value_loss)
@@ -202,7 +227,7 @@ class AlphaGooseTrainer:
             for i, m in enumerate(metric):
                 self.summary_writer.add_scalar(f'Batch/train_{metric_name}',
                                                m,
-                                               (self.epoch_counter + 1) * n_batches - (n_batches - i))
+                                               self.batch_counter - (n_batches - i))
         last_lr = self.lr_scheduler.get_last_lr()
         assert len(last_lr) == 1, 'Logging per-parameter LR still needs support'
         self.summary_writer.add_scalar(f'Epoch/learning_rate',

@@ -86,8 +86,9 @@ if __name__ == '__main__':
         dataset_kwargs=dataset_kwargs,
         dataloader_kwargs=dataloader_kwargs,
         device=DEVICE,
+        use_mixed_precision=False,
         exp_folder=exp_folder,
-        # min_saved_steps=1000,
+        min_saved_steps=1000,
     )
 
     try:

@@ -20,13 +20,17 @@ class Node:
         if available_actions_masks is None:
             self.available_actions_masks = np.ones_like(initial_policies)
         else:
-            self.available_actions_masks = available_actions_masks
+            self.available_actions_masks = np.where(
+                available_actions_masks.any(axis=-1, keepdims=True),
+                available_actions_masks,
+                np.ones_like(available_actions_masks)
+            )
         self.initial_policies = initial_policies
         assert self.initial_policies.shape == (self.n_geese, 4)
         assert np.all(0. <= self.initial_policies) and np.all(self.initial_policies <= 1.)
         assert np.allclose(self.initial_policies.sum(axis=-1), 1.)
         # Re-normalize policy distribution
-        self.initial_policies = self.initial_policies * available_actions_masks
+        self.initial_policies = self.initial_policies * self.available_actions_masks
         if np.any(self.initial_policies.sum(axis=1) == 0.):
             if np.logical_and(self.initial_policies.sum(axis=1) == 0.,
                               self.available_actions_masks.any(axis=1)).any():

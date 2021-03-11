@@ -2,6 +2,7 @@ from kaggle_environments.envs.hungry_geese.hungry_geese import Action
 import numpy as np
 from pathlib import Path
 import random
+import time
 import torch
 from torch.utils.data import Dataset
 from typing import *
@@ -24,7 +25,7 @@ class AlphaGooseDataset(Dataset):
             raise ValueError('Other obs_types have not yet been implemented, '
                              'they will need different data concatenation')
 
-    def __getitem__(self, index: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    def __getitem__(self, index: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         step = None
         for i in range(10):
             # Try and reread the file up to 10 times if an error occurs
@@ -39,6 +40,7 @@ class AlphaGooseDataset(Dataset):
 
         state = create_obs_tensor(step, self.obs_type)
         policies = []
+        available_actions_masks = []
         final_ranks = []
         head_locs = []
         still_alive = []
@@ -47,17 +49,20 @@ class AlphaGooseDataset(Dataset):
             final_ranks.append(agent['final_rank'])
             if still_alive[-1]:
                 policies.append(np.array(agent['policy']))
+                available_actions_masks.append(np.array(agent['available_actions_mask']))
                 head_locs.append(step[0]['observation']['geese'][agent_idx][0])
             else:
                 policies.append(np.zeros(4))
+                available_actions_masks.append(np.zeros(4))
                 head_locs.append(-1)
         ranks_rescaled = 2. * np.array(final_ranks) / (4. - 1.) - 1.
 
-        sample = (state.squeeze(axis=0),
-                  np.stack(policies, axis=0),
-                  ranks_rescaled,
-                  np.array(head_locs),
-                  np.array(still_alive))
+        sample = (state.squeeze(axis=0).astype(np.float32),
+                  np.stack(policies, axis=0).astype(np.float32),
+                  np.stack(available_actions_masks, axis=0).astype(np.bool),
+                  ranks_rescaled.astype(np.float32),
+                  np.array(head_locs).astype(np.int64),
+                  np.array(still_alive).astype(np.bool))
 
         if self.transform is not None:
             sample = self.transform(sample)
@@ -104,11 +109,11 @@ class AlphaGoosePretrainDataset(Dataset):
                 head_locs.append(-1)
         ranks_rescaled = 2. * np.array(final_ranks) / (4. - 1.) - 1.
 
-        sample = (state.squeeze(axis=0),
-                  np.array(actions),
-                  ranks_rescaled,
-                  np.array(head_locs),
-                  np.array(still_alive))
+        sample = (state.squeeze(axis=0).astype(np.float32),
+                  np.array(actions).astype(np.int64),
+                  ranks_rescaled.astype(np.float32),
+                  np.array(head_locs).astype(np.int64),
+                  np.array(still_alive).astype(np.bool))
 
         if self.transform is not None:
             sample = self.transform(sample)
@@ -132,19 +137,21 @@ class AlphaGooseRandomReflect:
     def __call__(
             self,
             sample: Sequence[np.ndarray]
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        state, policies, ranks_rescaled, head_locs, still_alive = sample
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        state, policies, available_actions_masks, ranks_rescaled, head_locs, still_alive = sample
         if self.obs_type == ObsType.COMBINED_GRADIENT_OBS:
             new_head_locs = np.arange(state.shape[-2] * state.shape[-1]).reshape(*state.shape[-2:])
             # Flip vertically
             if random.random() < 0.5:
                 state = np.flip(state, axis=-2)
                 policies = flip_policies(policies, 'rows')
+                available_actions_masks = flip_policies(available_actions_masks, 'rows')
                 new_head_locs = np.flip(new_head_locs, axis=-2)
             # Flip horizontally
             if random.random() < 0.5:
                 state = np.flip(state, axis=-1)
                 policies = flip_policies(policies, 'cols')
+                available_actions_masks = flip_policies(available_actions_masks, 'cols')
                 new_head_locs = np.flip(new_head_locs, axis=-1)
             head_locs = np.where(
                 still_alive,
@@ -153,7 +160,7 @@ class AlphaGooseRandomReflect:
             )
         else:
             raise ValueError(f'Not yet a supported obs_type: {self.obs_type}')
-        return state, policies, ranks_rescaled, head_locs, still_alive
+        return state, policies, available_actions_masks, ranks_rescaled, head_locs, still_alive
 
 
 class PretrainRandomReflect:
@@ -178,12 +185,12 @@ class PretrainRandomReflect:
             if random.random() < 0.5:
                 state = np.flip(state, axis=-2)
                 actions = flip_actions(actions, 'rows')
-                new_head_locs = np.flip(new_head_locs, axis=-2, )
+                new_head_locs = np.flip(new_head_locs, axis=-2)
             # Flip horizontally
             if random.random() < 0.5:
-                state = np.flip(state, axis=-1, )
+                state = np.flip(state, axis=-1)
                 actions = flip_actions(actions, 'cols')
-                new_head_locs = np.flip(new_head_locs, axis=-1, )
+                new_head_locs = np.flip(new_head_locs, axis=-1)
             head_locs = np.where(
                 still_alive,
                 new_head_locs.ravel()[head_locs.ravel()].reshape(head_locs.shape),
@@ -196,19 +203,14 @@ class PretrainRandomReflect:
 
 class ToTensor:
     """
-    Given a tuple of (state, actions, ranks_rescaled, head_locs, still_alive) arrays, convert them to pytorch tensors
+    Given a sequence of numpy arrays, convert them to pytorch tensors
     """
 
     def __call__(
             self,
-            sample: Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        state, actions, ranks_rescaled, head_locs, still_alive = sample
-        return (torch.tensor(state.copy(), dtype=torch.float32),
-                torch.tensor(actions, dtype=torch.int64),
-                torch.tensor(ranks_rescaled, dtype=torch.float32),
-                torch.tensor(head_locs, dtype=torch.int64),
-                torch.tensor(still_alive, dtype=torch.bool))
+            sample: Sequence[np.ndarray]
+    ) -> List[torch.Tensor]:
+        return [torch.from_numpy(arr.copy()) for arr in sample]
 
 
 def flip_policies(policies: np.ndarray, flipped_rows_or_cols: str) -> np.ndarray:
