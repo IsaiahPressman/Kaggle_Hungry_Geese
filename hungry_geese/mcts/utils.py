@@ -46,7 +46,9 @@ def actor_critic_factory(model: FullConvActorCriticNetwork, obs_type: ge.ObsType
     return actor_critic_func
 
 
-def batch_actor_critic_factory(model: FullConvActorCriticNetwork, obs_type: ge.ObsType):
+def batch_actor_critic_factory(model: FullConvActorCriticNetwork,
+                               obs_type: ge.ObsType,
+                               float_precision: Union[torch.float32, torch.float16]):
     def batch_actor_critic_func(states: List[List[Dict]], device: torch.device):
         obs_list = []
         head_locs_list = []
@@ -63,7 +65,7 @@ def batch_actor_critic_factory(model: FullConvActorCriticNetwork, obs_type: ge.O
             rewards_list.append([agent['reward'] for agent in state])
         with torch.no_grad():
             logits, values = model(
-                torch.from_numpy(np.concatenate(obs_list, axis=0)).to(device=device),
+                torch.from_numpy(np.concatenate(obs_list, axis=0)).to(device=device, dtype=float_precision),
                 torch.tensor(head_locs_list).to(device=device),
                 torch.tensor(still_alive_list).to(device=device)
             )

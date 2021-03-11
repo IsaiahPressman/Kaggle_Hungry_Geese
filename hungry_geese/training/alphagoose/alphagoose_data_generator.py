@@ -21,6 +21,7 @@ def alphagoose_data_generator_worker(
         worker_id: int,
         model_kwargs: Dict,
         device: torch.device,
+        float_precision: Union[torch.float32, torch.float16],
         n_envs_per_worker: int,
         worker_data_dir: Path,
         weights_dir: Path,
@@ -47,12 +48,12 @@ def alphagoose_data_generator_worker(
     post_search_policies = [[] for _ in range(n_envs_per_worker)]
     # Create model and load weights
     model = FullConvActorCriticNetwork(**model_kwargs)
-    model.to(device=device)
+    model.to(device=device, dtype=float_precision)
     current_weights_path = get_most_recent_weights_file(weights_dir)
     model.load_state_dict(torch.load(current_weights_path, map_location=device))
     model.eval()
     # Load actor_critic_func
-    batch_actor_critic_func = batch_actor_critic_factory(model, obs_type)
+    batch_actor_critic_func = batch_actor_critic_factory(model, obs_type, float_precision)
     n_saved_steps = 0
     while True:
         for steps_since_reload in range(model_reload_freq):

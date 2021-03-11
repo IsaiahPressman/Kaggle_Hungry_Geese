@@ -54,6 +54,7 @@ if __name__ == '__main__':
         data_dir=Path('/home/isaiah/data/alphagoose_data'),
         max_saved_steps=int(1e6),
         model_kwargs=model_kwargs,
+        float_precision=torch.float32,
         n_envs_per_worker=20,
         weights_dir=weights_dir,
         obs_type=obs_type,
