@@ -47,7 +47,7 @@ if __name__ == '__main__':
     model.to(device=DEVICE)
     optimizer = torch.optim.SGD(
         model.parameters(),
-        lr=0.02,
+        lr=0.002,
         momentum=0.9,
         weight_decay=1e-4
     )
@@ -55,7 +55,7 @@ if __name__ == '__main__':
     lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(
         optimizer,
         # Stop reducing LR beyond 2e-4
-        milestones=[200000 * i for i in range(2, 4)],
+        milestones=[200000 * i for i in [2]],
         gamma=0.1
     )
     dataset_kwargs = dict(

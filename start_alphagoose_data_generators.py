@@ -58,7 +58,7 @@ if __name__ == '__main__':
         weights_dir=weights_dir,
         obs_type=obs_type,
         model_reload_freq=100,
-        n_iter=10,
+        n_iter=50,
         include_food=False,
         add_noise=False,
         noise_val=1.,
