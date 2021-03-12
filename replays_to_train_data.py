@@ -3,6 +3,7 @@ from copy import copy
 import ujson
 import kaggle_environments
 import numpy as np
+import os
 from pathlib import Path
 import pandas as pd
 from scipy import stats
@@ -64,9 +65,14 @@ def batch_split_replay_files(replay_paths: List[Path], save_dir: Path, force: bo
             else:
                 raise RuntimeError(f'Replay already exists and force is False: {(save_dir / rp.name)}')
         except (kaggle_environments.errors.InvalidArgument, RuntimeError) as e:
-            print(f'Unable save replay {rp.name}:')
+            print(f'Unable to save replay {rp.name}:')
             replay_paths.remove(rp)
             print(e)
+        except ValueError as e:
+            print(f'Unable to save empty replay {rp.name} - deleting:')
+            replay_paths.remove(rp)
+            print(e)
+            os.remove(rp)
 
     all_replay_names = list(set([rp.stem for rp in all_replay_paths]))
     saved_replay_names = list(set(saved_replay_names))
