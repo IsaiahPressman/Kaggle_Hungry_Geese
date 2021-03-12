@@ -49,7 +49,7 @@ if __name__ == '__main__':
     print(f'Loading initial model weights from: {adg.get_most_recent_weights_file(weights_dir)}')
 
     adg.multiprocess_alphagoose_data_generator(
-        n_workers=5,
+        n_workers=6,
         device=DEVICE,
         data_dir=Path('/home/isaiah/data/alphagoose_data'),
         max_saved_steps=int(1.2e6),
