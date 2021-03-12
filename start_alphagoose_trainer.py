@@ -77,7 +77,7 @@ if __name__ == '__main__':
                                                              ge.RewardType.RANK_ON_DEATH,
                                                              ge.ActionMasking.LETHAL,
                                                              [n_channels],
-                                                             model_kwargs['conv_block_kwargs']) + '_v1'
+                                                             model_kwargs['conv_block_kwargs']) + '_v2'
     exp_folder = Path(f'runs/alphagoose/{experiment_name}')
     train_alg = AlphaGooseTrainer(
         model=model,
@@ -86,11 +86,11 @@ if __name__ == '__main__':
         dataset_kwargs=dataset_kwargs,
         dataloader_kwargs=dataloader_kwargs,
         device=DEVICE,
-        use_mixed_precision=False,
+        use_mixed_precision=True,
         exp_folder=exp_folder,
-        min_saved_steps=1000,
+        min_saved_steps=10000,
         checkpoint_freq=5,
-        checkpoint_render_n_games=5,
+        checkpoint_render_n_games=2,
     )
 
     try:

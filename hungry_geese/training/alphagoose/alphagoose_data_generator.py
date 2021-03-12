@@ -21,7 +21,6 @@ def alphagoose_data_generator_worker(
         worker_id: int,
         model_kwargs: Dict,
         device: torch.device,
-        float_precision: Union[torch.float32, torch.float16],
         n_envs_per_worker: int,
         worker_data_dir: Path,
         weights_dir: Path,
@@ -29,10 +28,11 @@ def alphagoose_data_generator_worker(
         max_saved_steps: int,
         model_reload_freq: int,
         n_iter: int,
+        float_precision: torch.dtype = torch.float32,
         **mcts_kwargs
 ):
     # For whatever reason, this sleep statement helps prevent CUDNN_NOT_INITIALIZED errors
-    time.sleep(2.)
+    time.sleep(worker_id / 5.)
     # Create environments
     envs = [make() for _ in range(n_envs_per_worker)]
     for env in envs:

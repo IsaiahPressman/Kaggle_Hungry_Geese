@@ -28,7 +28,7 @@ class Node:
         self.initial_policies = initial_policies
         assert self.initial_policies.shape == (self.n_geese, 4)
         assert np.all(0. <= self.initial_policies) and np.all(self.initial_policies <= 1.)
-        assert np.allclose(self.initial_policies.sum(axis=-1), 1.)
+        assert np.allclose(self.initial_policies.sum(axis=-1), 1., atol=1e-2)
         # Re-normalize policy distribution
         self.initial_policies = self.initial_policies * self.available_actions_masks
         if np.any(self.initial_policies.sum(axis=1) == 0.):
@@ -58,7 +58,7 @@ class Node:
             values = values[:, np.newaxis]
         if values.shape != (self.n_geese, 1):
             raise RuntimeError(f'Values should be of shape {(self.n_geese, 1)}, got {values.shape}')
-        if not np.isclose(values.sum(), 0., atol=1e-4):
+        if not np.isclose(values.sum(), 0., atol=1e-2):
             raise RuntimeError(f'Values should sum to 0, got {values.ravel()} which sums to {values.sum()}')
         if (values.ravel()[self.geese_still_playing].min(initial=float('inf')) <=
                 values.ravel()[~self.geese_still_playing].max(initial=float('-inf'))):

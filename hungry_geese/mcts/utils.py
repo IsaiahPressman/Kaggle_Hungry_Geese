@@ -48,7 +48,7 @@ def actor_critic_factory(model: FullConvActorCriticNetwork, obs_type: ge.ObsType
 
 def batch_actor_critic_factory(model: FullConvActorCriticNetwork,
                                obs_type: ge.ObsType,
-                               float_precision: Union[torch.float32, torch.float16]):
+                               float_precision: torch.dtype):
     def batch_actor_critic_func(states: List[List[Dict]], device: torch.device):
         obs_list = []
         head_locs_list = []
