@@ -12,7 +12,7 @@ from typing import *
 from hungry_geese.utils import read_json
 
 
-def split_replay_file(replay_dict: Dict) -> List[List[Dict]]:
+def process_replay_file(replay_dict: Dict) -> List[List[Dict]]:
     env = kaggle_environments.make(
         'hungry_geese',
         configuration=replay_dict['configuration'],
@@ -50,20 +50,18 @@ def batch_split_replay_files(replay_paths: List[Path], save_dir: Path, force: bo
     else:
         save_dir.mkdir()
 
-    file_counter = 0
+    step_counter = 0
     print(f'Processing {len(replay_paths)} replays and saving output to {save_dir.absolute()}')
     for rp in tqdm.tqdm(copy(replay_paths)):
         try:
-            steps = split_replay_file(read_json(rp))
-            if not (save_dir / rp.stem).exists() or force:
-                (save_dir / rp.stem).mkdir(exist_ok=True)
-                for i, step in enumerate(steps):
-                    with open(save_dir / rp.stem / f'{i}.json', 'w') as f:
-                        json.dump(step, f)
-                        file_counter += 1
-                    saved_replay_names.append(rp.stem)
+            episode = process_replay_file(read_json(rp))
+            if not (save_dir / rp.name).exists() or force:
+                with open(save_dir / rp.name, 'w') as f:
+                    json.dump(episode, f)
+                step_counter += len(episode)
+                saved_replay_names.append(rp.stem)
             else:
-                raise RuntimeError(f'Folder already exists and force is False: {(save_dir / rp.stem)}')
+                raise RuntimeError(f'Replay already exists and force is False: {(save_dir / rp.name)}')
         except (kaggle_environments.errors.InvalidArgument, RuntimeError) as e:
             print(f'Unable save replay {rp.name}:')
             replay_paths.remove(rp)
@@ -77,7 +75,7 @@ def batch_split_replay_files(replay_paths: List[Path], save_dir: Path, force: bo
         f.writelines([f'{rn}\n' for rn in all_replay_names])
     with open(save_dir / 'all_saved_episodes.txt', 'w') as f:
         f.writelines([f'{rn}\n' for rn in saved_replay_names])
-    print(f'Successfully saved {file_counter:,} steps from {len(replay_paths)} replays.')
+    print(f'Successfully saved {step_counter:,} steps from {len(replay_paths)} replays.')
     print(f'{len(saved_replay_names)} out of {len(all_replay_names)} replays saved in total.')
 
 
