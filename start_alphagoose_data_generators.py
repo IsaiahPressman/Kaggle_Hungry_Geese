@@ -44,21 +44,21 @@ if __name__ == '__main__':
     )
 
     weights_dir = Path(
-        'runs/alphagoose/alphagoose_combined_gradient_obs_rank_on_death_lethal_3_blocks_128_dims_v2/all_checkpoints_pt'
+        'runs/alphagoose/alphagoose_combined_gradient_obs_rank_on_death_lethal_3_blocks_128_dims_v3/all_checkpoints_pt'
     )
     print(f'Loading initial model weights from: {adg.get_most_recent_weights_file(weights_dir)}')
 
     adg.multiprocess_alphagoose_data_generator(
-        n_workers=6,
+        n_workers=1,
         device=DEVICE,
-        data_dir=Path('/home/isaiah/data/alphagoose_data'),
+        dataset_path=Path('/home/isaiah/data/alphagoose_data.json'),
         max_saved_steps=int(1.2e6),
         model_kwargs=model_kwargs,
         n_envs_per_worker=20,
         weights_dir=weights_dir,
         obs_type=obs_type,
         model_reload_freq=100,
-        n_iter=50,
+        n_iter=10,
         include_food=False,
         add_noise=False,
         noise_val=1.,

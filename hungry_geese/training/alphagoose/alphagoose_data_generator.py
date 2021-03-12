@@ -1,4 +1,5 @@
 import copy
+from filelock import FileLock
 import json
 import torch.multiprocessing as mp
 import numpy as np
@@ -19,13 +20,12 @@ from ...utils import ActionMasking
 
 def alphagoose_data_generator_worker(
         worker_id: int,
+        save_episode_queue: mp.Queue,
         model_kwargs: Dict,
         device: torch.device,
         n_envs_per_worker: int,
-        worker_data_dir: Path,
         weights_dir: Path,
         obs_type: ge.ObsType,
-        max_saved_steps: int,
         model_reload_freq: int,
         n_iter: int,
         float_precision: torch.dtype = torch.float32,
@@ -44,7 +44,6 @@ def alphagoose_data_generator_worker(
         **mcts_kwargs
     ) for _ in range(n_envs_per_worker)]
     available_actions_masks = [[] for _ in range(n_envs_per_worker)]
-    pre_search_policies = [[] for _ in range(n_envs_per_worker)]
     post_search_policies = [[] for _ in range(n_envs_per_worker)]
     # Create model and load weights
     model = FullConvActorCriticNetwork(**model_kwargs)
@@ -54,25 +53,18 @@ def alphagoose_data_generator_worker(
     model.eval()
     # Load actor_critic_func
     batch_actor_critic_func = batch_actor_critic_factory(model, obs_type, float_precision)
-    n_saved_steps = 0
     while True:
         for steps_since_reload in range(model_reload_freq):
             for env_idx, env in enumerate(envs):
                 if env.done:
-                    save_start_time = time.time()
-                    n_saved_steps = save_episode_steps(
+                    save_episode_steps(
+                        save_episode_queue,
                         env,
                         available_actions_masks[env_idx],
-                        pre_search_policies[env_idx],
                         post_search_policies[env_idx],
-                        worker_data_dir,
-                        n_saved_steps,
-                        max_saved_steps
                     )
-                    print(f'{worker_id}: Saved train examples in {time.time() - save_start_time:.2} seconds')
                     env.reset()
                     available_actions_masks[env_idx] = []
-                    pre_search_policies[env_idx] = []
                     post_search_policies[env_idx] = []
             step_start_time = time.time()
             # n_iter + 1 because the first iteration creates the root node
@@ -100,13 +92,12 @@ def alphagoose_data_generator_worker(
                             value_est=values_batch[idx],
                             **backprop_kwargs
                         )
-            for idx, (env, search_tree, available_actions_list, pre_policy_list, post_policy_list) in enumerate(zip(
-                    envs, search_trees, available_actions_masks, pre_search_policies, post_search_policies
+            for idx, (env, search_tree, available_actions_list, post_policy_list) in enumerate(zip(
+                    envs, search_trees, available_actions_masks, post_search_policies
             )):
                 root_node = search_tree.get_root_node(env)
                 # Booleans are not JSON serializable
                 available_actions_list.append(root_node.available_actions_masks.astype(np.float))
-                pre_policy_list.append(root_node.initial_policies)
                 post_policy_list.append(root_node.get_improved_policies(temp=1.))
                 actions = root_node.get_improved_actions(temp=0.)
                 env.step(actions)
@@ -119,69 +110,74 @@ def alphagoose_data_generator_worker(
             current_weights_path = latest_weights_path
             model.load_state_dict(torch.load(current_weights_path, map_location=device))
             model.eval()
-            print(f'{worker_id}: Reloaded model in {time.time() - reload_start_time:.2f} seconds')
+            print(f'{worker_id}: Reloaded model {current_weights_path.name} in '
+                  f'{time.time() - reload_start_time:.2f} seconds')
 
 
 def save_episode_steps(
+        save_episode_queue: mp.Queue,
         env: LightweightEnv,
         available_actions_masks: List[np.ndarray],
-        pre_search_policies: List[np.ndarray],
-        post_search_policies: List[np.ndarray],
-        worker_data_dir: Path,
-        n_saved_steps: int,
-        max_saved_steps,
-) -> int:
-    # Save the episode steps to disk
+        post_search_policies: List[np.ndarray]
+) -> NoReturn:
+    # Send the episode steps to the writer to be saved to disk
     game_score = np.array([agent['reward'] for agent in env.steps[-1]])
     agent_rankings = stats.rankdata(game_score, method='average') - 1.
+    episode = []
     for step_idx, step in enumerate(env.steps[:-1]):
         for agent_idx, agent in enumerate(step):
             agent['final_rank'] = agent_rankings[agent_idx]
             if agent['status'] == 'ACTIVE':
                 agent['available_actions_mask'] = list(available_actions_masks[step_idx][agent_idx])
-                agent['initial_policy'] = list(pre_search_policies[step_idx][agent_idx])
                 agent['policy'] = list(post_search_policies[step_idx][agent_idx])
-        with open(worker_data_dir / f'{int(n_saved_steps)}.json', 'w') as f:
-            json.dump(step, f)
-        n_saved_steps = (n_saved_steps + 1) % max_saved_steps
-    return n_saved_steps
+        episode.append(step)
+    save_episode_queue.put_nowait(episode)
 
 
 def get_most_recent_weights_file(weights_dir: Path) -> Path:
     all_weight_files = list(weights_dir.glob('*.pt'))
     all_weight_files.sort(key=lambda f: int(f.stem))
 
+    if len(all_weight_files) == 0:
+        raise FileNotFoundError(f'No .pt weight files found in {weights_dir}')
     return all_weight_files[-1]
 
 
 def multiprocess_alphagoose_data_generator(
         n_workers: int,
-        device: torch.device,
-        data_dir: Path,
+        dataset_path: Path,
         max_saved_steps: int,
         **data_generator_kwargs
 ):
     mp.set_start_method('spawn')
     os.environ['OMP_NUM_THREADS'] = '1'
-    if data_dir.exists() and any(Path(data_dir).iterdir()):
-        raise RuntimeError(f'data_dir already exists and is not empty: {data_dir}')
-    else:
-        data_dir.mkdir(exist_ok=True)
-    assert max_saved_steps % n_workers == 0
+    if dataset_path.exists():
+        raise RuntimeError(f'data_dir already exists: {dataset_path}')
 
+    save_episode_queue = mp.Queue()
     processes = []
-    for rank in range(n_workers):
-        worker_data_dir = data_dir / str(rank)
-        worker_data_dir.mkdir()
-        data_generator_kwargs['worker_id'] = rank
-        data_generator_kwargs['device'] = device
-        data_generator_kwargs['worker_data_dir'] = worker_data_dir
-        data_generator_kwargs['max_saved_steps'] = max_saved_steps / n_workers
+    for worker_id in range(n_workers):
         p = mp.Process(
             target=alphagoose_data_generator_worker,
+            args=(worker_id, save_episode_queue),
             kwargs=copy.deepcopy(data_generator_kwargs)
         )
+        p.daemon = True
         p.start()
         processes.append(p)
-    for p in processes:
-        p.join()
+
+    all_steps = []
+    steps_batch = []
+    while True:
+        steps_batch.extend(save_episode_queue.get())
+        # Save steps in batches of 1000+
+        if len(steps_batch) >= 1000:
+            save_start_time = time.time()
+            all_steps.extend(steps_batch)
+            if len(all_steps) > max_saved_steps:
+                all_steps = all_steps[-max_saved_steps:]
+            with FileLock(str(dataset_path) + '.lock'):
+                with open(dataset_path, 'w') as f:
+                    json.dump(all_steps, f)
+            print(f'Saved {len(steps_batch)} train examples in {time.time() - save_start_time:.2} seconds')
+            steps_batch = []

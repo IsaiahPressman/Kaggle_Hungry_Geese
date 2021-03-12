@@ -59,7 +59,7 @@ if __name__ == '__main__':
         gamma=0.1
     )
     dataset_kwargs = dict(
-        root='/home/isaiah/data/alphagoose_data/',
+        dataset_path='/home/isaiah/data/alphagoose_data.json',
         obs_type=obs_type,
         transform=transforms.Compose([
             AlphaGooseRandomReflect(obs_type),
@@ -77,7 +77,7 @@ if __name__ == '__main__':
                                                              ge.RewardType.RANK_ON_DEATH,
                                                              ge.ActionMasking.LETHAL,
                                                              [n_channels],
-                                                             model_kwargs['conv_block_kwargs']) + '_v2'
+                                                             model_kwargs['conv_block_kwargs']) + '_v3'
     exp_folder = Path(f'runs/alphagoose/{experiment_name}')
     train_alg = AlphaGooseTrainer(
         model=model,
@@ -88,7 +88,7 @@ if __name__ == '__main__':
         device=DEVICE,
         use_mixed_precision=True,
         exp_folder=exp_folder,
-        # min_saved_steps=10000,
+        min_saved_steps=2000,
         checkpoint_freq=5,
         checkpoint_render_n_games=2,
     )

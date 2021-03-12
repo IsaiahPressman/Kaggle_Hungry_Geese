@@ -1,9 +1,8 @@
+from filelock import FileLock
 from kaggle_environments.envs.hungry_geese.hungry_geese import Action
-from json import JSONDecodeError
 import numpy as np
 from pathlib import Path
 import random
-import time
 import torch
 from torch.utils.data import Dataset
 from typing import *
@@ -14,12 +13,11 @@ from ...utils import read_json
 
 class AlphaGooseDataset(Dataset):
     def __init__(self,
-                 root: Union[str, Path],
+                 dataset_path: Union[str, Path],
                  obs_type: ObsType,
-                 transform: Optional[Callable] = None,
-                 file_ext: str = '.json'):
-        self.episodes = [d for d in Path(root).glob('*') if d.is_dir()]
-        self.samples = [f for e in self.episodes for f in e.glob(f'*{file_ext}')]
+                 transform: Optional[Callable] = None):
+        with FileLock(str(dataset_path) + '.lock'):
+            self.samples = read_json(dataset_path)
         self.obs_type = obs_type
         self.transform = transform
         if self.obs_type != ObsType.COMBINED_GRADIENT_OBS:
@@ -27,18 +25,7 @@ class AlphaGooseDataset(Dataset):
                              'they will need different data concatenation')
 
     def __getitem__(self, index: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        step = None
-        for i in range(10):
-            # Try and reread the file up to 10 times if an error occurs
-            try:
-                step = read_json(self.samples[index])
-                break
-            # Sometimes, this error occurs when the train sample is written to at the same time as it is being read
-            except JSONDecodeError:
-                time.sleep(0.2)
-        # If the error keeps happening, allow it to be raised and halt the process
-        if step is None:
-            step = read_json(self.samples[index])
+        step = self.samples[index]
 
         state = create_obs_tensor(step, self.obs_type)
         policies = []
@@ -79,13 +66,15 @@ class AlphaGoosePretrainDataset(Dataset):
                  root: Union[str, Path],
                  obs_type: ObsType,
                  transform: Optional[Callable] = None,
-                 include_episode: Optional[Callable] = None,
-                 file_ext: str = '.json'):
+                 include_episode: Optional[Callable] = None):
         if include_episode is None:
             def include_episode(_):
                 return True
-        self.episodes = [d for d in Path(root).glob('*') if d.is_dir() and include_episode(d)]
-        self.samples = [f for e in self.episodes for f in e.glob(f'*{file_ext}')]
+        self.episodes = [d for d in Path(root).glob('*.json') if include_episode(d)]
+        self.samples = []
+        for episode_path in self.episodes:
+            step_list = read_json(episode_path)
+            self.samples.extend([(episode_path, step_idx) for step_idx in range(len(step_list))])
         self.obs_type = obs_type
         self.transform = transform
         if self.obs_type != ObsType.COMBINED_GRADIENT_OBS:
@@ -93,7 +82,8 @@ class AlphaGoosePretrainDataset(Dataset):
                              'they will need different data concatenation')
 
     def __getitem__(self, index: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        step = read_json(self.samples[index])
+        episode_path, step_idx = self.samples[index]
+        step = read_json(episode_path)[step_idx]
 
         state = create_obs_tensor(step, self.obs_type)
         actions = []
