@@ -28,8 +28,8 @@ class AlphaGooseTrainer:
             lr_scheduler: torch.optim.lr_scheduler,
             dataset_kwargs: Dict,
             dataloader_kwargs: Dict,
-            min_saved_steps: int = int(3e5),
-            max_saved_steps: int = int(1.2e6),
+            min_saved_steps: int = int(2.5e5),
+            max_saved_steps: int = int(1e6),
             policy_weight: float = 1.,
             value_weight: float = 1.,
             device: torch.device = torch.device('cuda'),
@@ -122,14 +122,15 @@ class AlphaGooseTrainer:
             while not Path(self.dataset_kwargs['dataset_path']).exists():
                 print(f'No samples found yet in {self.dataset_kwargs["dataset_path"]}')
                 time.sleep(20.)
+            epoch_start_time = time.time()
             dataset = AlphaGooseDataset(**self.dataset_kwargs)
             while len(dataset) < self.min_saved_steps:
+                epoch_start_time = time.time()
                 dataset = AlphaGooseDataset(**self.dataset_kwargs)
                 if len(dataset) < self.min_saved_steps:
                     print(f'Only {len(dataset)} out of {self.min_saved_steps} minimum samples found. Sleeping...')
                     time.sleep(20.)
             dataloader = DataLoader(dataset, **self.dataloader_kwargs)
-            epoch_start_time = time.time()
             self.model.train()
             train_metrics = {
                 'policy_loss': [],
@@ -216,8 +217,8 @@ class AlphaGooseTrainer:
             ), dim=-1).mean()
             """
             policy_loss = -torch.sum(search_policy * F.log_softmax(logits, dim=-1), dim=-1).mean()
-            if policy_loss.cpu().item() > 1.:
-                print(logits, search_policy, F.log_softmax(logits, dim=-1))
+            # if policy_loss.cpu().item() > 1.:
+            #     print(logits, search_policy, F.log_softmax(logits, dim=-1))
 
             value = value.view(-1)[still_alive.view(-1)]
             result = result.view(-1)[still_alive.view(-1)]
