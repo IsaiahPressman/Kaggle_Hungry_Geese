@@ -88,7 +88,7 @@ if __name__ == '__main__':
         device=DEVICE,
         use_mixed_precision=True,
         exp_folder=exp_folder,
-        min_saved_steps=10000,
+        # min_saved_steps=10000,
         checkpoint_freq=5,
         checkpoint_render_n_games=2,
     )
