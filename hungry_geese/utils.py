@@ -1,9 +1,10 @@
 from enum import *
-import json
+import ujson
 from kaggle_environments.envs.hungry_geese.hungry_geese import Action
 from kaggle_environments.envs.hungry_geese.hungry_geese import row_col as _row_col
 from numbers import Number
 import numpy as np
+from pathlib import Path
 from typing import *
 
 from .config import *
@@ -87,9 +88,14 @@ def print_array_one_line(arr: Union[np.ndarray, Number]) -> str:
         return f'{arr:.2f}'
 
 
-def read_json(file_path):
-    with open(file_path, 'r') as f:
-        return json.load(f)
+def read_json(file_path: Union[str, Path]):
+    with open(file_path, 'rb') as f:
+        return ujson.load(f)
+
+
+def read_json_lines(file_path: Union[str, Path], line_idx: int):
+    with open(file_path, 'rb') as f:
+        return ujson.loads(f.readlines()[line_idx])
 
 
 def format_experiment_name(obs_type,

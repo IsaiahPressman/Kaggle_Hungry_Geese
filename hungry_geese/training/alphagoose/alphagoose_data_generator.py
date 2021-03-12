@@ -1,6 +1,6 @@
 import copy
 from filelock import FileLock
-import json
+import ujson
 import torch.multiprocessing as mp
 import numpy as np
 import os
@@ -178,6 +178,6 @@ def multiprocess_alphagoose_data_generator(
                 all_steps = all_steps[-max_saved_steps:]
             with FileLock(str(dataset_path) + '.lock'):
                 with open(dataset_path, 'w') as f:
-                    json.dump(all_steps, f)
+                    ujson.dump(all_steps, f)
             print(f'Saved {len(steps_batch)} train examples in {time.time() - save_start_time:.2} seconds')
             steps_batch = []

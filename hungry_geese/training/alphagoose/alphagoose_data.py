@@ -8,7 +8,7 @@ from torch.utils.data import Dataset
 from typing import *
 
 from ...env.goose_env import ObsType, create_obs_tensor
-from ...utils import read_json
+from ...utils import read_json, read_json_lines
 
 
 class AlphaGooseDataset(Dataset):
@@ -70,11 +70,12 @@ class AlphaGoosePretrainDataset(Dataset):
         if include_episode is None:
             def include_episode(_):
                 return True
-        self.episodes = [d for d in Path(root).glob('*.json') if include_episode(d)]
+        self.episodes = [d for d in Path(root).glob('*.ljson') if include_episode(d)]
         self.samples = []
         for episode_path in self.episodes:
-            step_list = read_json(episode_path)
-            self.samples.extend([(episode_path, step_idx) for step_idx in range(len(step_list))])
+            with open(episode_path, 'rb') as f:
+                step_list = f.readlines()
+                self.samples.extend([(episode_path, step_idx) for step_idx in range(len(step_list))])
         self.obs_type = obs_type
         self.transform = transform
         if self.obs_type != ObsType.COMBINED_GRADIENT_OBS:
@@ -83,7 +84,7 @@ class AlphaGoosePretrainDataset(Dataset):
 
     def __getitem__(self, index: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         episode_path, step_idx = self.samples[index]
-        step = read_json(episode_path)[step_idx]
+        step = read_json_lines(episode_path, step_idx)
 
         state = create_obs_tensor(step, self.obs_type)
         actions = []

@@ -69,7 +69,7 @@ if __name__ == '__main__':
     lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(
         optimizer,
         # Stop reducing LR beyond 1e-5
-        milestones=[150000*i for i in range(2, 5)],
+        milestones=[150000*i for i in range(1, 5)],
         gamma=0.1
     )
 
@@ -103,7 +103,7 @@ if __name__ == '__main__':
         pin_memory=True
     )
     train_dataloader = DataLoader(train_dataset, num_workers=6, **dataloader_kwargs)
-    test_dataloader = DataLoader(test_dataset, num_workers=10, **dataloader_kwargs)
+    test_dataloader = DataLoader(test_dataset, num_workers=14, **dataloader_kwargs)
 
     experiment_name = 'supervised_pretraining_' + format_experiment_name(obs_type,
                                                                          ge.RewardType.RANK_ON_DEATH,

@@ -1,6 +1,6 @@
 import argparse
 from copy import copy
-import json
+import ujson
 import kaggle_environments
 import numpy as np
 from pathlib import Path
@@ -55,9 +55,10 @@ def batch_split_replay_files(replay_paths: List[Path], save_dir: Path, force: bo
     for rp in tqdm.tqdm(copy(replay_paths)):
         try:
             episode = process_replay_file(read_json(rp))
-            if not (save_dir / rp.name).exists() or force:
-                with open(save_dir / rp.name, 'w') as f:
-                    json.dump(episode, f)
+            save_file_name = save_dir / (rp.stem + '.ljson')
+            if not save_file_name.exists() or force:
+                with open(save_file_name, 'w') as f:
+                    f.writelines([ujson.dumps(step) + '\n' for step in episode])
                 step_counter += len(episode)
                 saved_replay_names.append(rp.stem)
             else:
