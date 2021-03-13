@@ -1,26 +1,25 @@
 from kaggle_environments.envs.hungry_geese.hungry_geese import Action
+from ujson import JSONDecodeError
 import numpy as np
 from pathlib import Path
 import random
+import time
 import torch
 from torch.utils.data import Dataset
 from typing import *
 
 from ...env.goose_env import ObsType, create_obs_tensor
-from ...utils import read_json_lines
+from ...utils import read_json
 
 
 class AlphaGooseDataset(Dataset):
     def __init__(self,
-                 dataset_dir: Union[str, Path],
+                 root: Union[str, Path],
                  obs_type: ObsType,
-                 transform: Optional[Callable] = None):
-        self.episodes = [d for d in Path(dataset_dir).glob('*.ljson')]
-        self.samples = []
-        for episode_path in self.episodes:
-            with open(episode_path, 'rb') as f:
-                step_list = f.readlines()
-                self.samples.extend([(episode_path, step_idx) for step_idx in range(len(step_list))])
+                 transform: Optional[Callable] = None,
+                 file_ext: str = '.json'):
+        self.episodes = [d for d in Path(root).glob('*') if d.is_dir()]
+        self.samples = [f for e in self.episodes for f in e.glob(f'*{file_ext}')]
         self.obs_type = obs_type
         self.transform = transform
         if self.obs_type != ObsType.COMBINED_GRADIENT_OBS:
@@ -28,8 +27,18 @@ class AlphaGooseDataset(Dataset):
                              'they will need different data concatenation')
 
     def __getitem__(self, index: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        episode_path, step_idx = self.samples[index]
-        step = read_json_lines(episode_path, step_idx)
+        step = None
+        for i in range(10):
+            # Try and reread the file up to 10 times if an error occurs
+            try:
+                step = read_json(self.samples[index])
+                break
+            # Sometimes, this error occurs when the train sample is written to at the same time as it is being read
+            except JSONDecodeError:
+                time.sleep(0.2)
+        # If the error keeps happening, allow it to be raised and halt the process
+        if step is None:
+            step = read_json(self.samples[index])
 
         state = create_obs_tensor(step, self.obs_type)
         policies = []
@@ -70,16 +79,13 @@ class AlphaGoosePretrainDataset(Dataset):
                  root: Union[str, Path],
                  obs_type: ObsType,
                  transform: Optional[Callable] = None,
-                 include_episode: Optional[Callable] = None):
+                 include_episode: Optional[Callable] = None,
+                 file_ext: str = '.json'):
         if include_episode is None:
             def include_episode(_):
                 return True
-        self.episodes = [d for d in Path(root).glob('*.ljson') if include_episode(d)]
-        self.samples = []
-        for episode_path in self.episodes:
-            with open(episode_path, 'rb') as f:
-                step_list = f.readlines()
-                self.samples.extend([(episode_path, step_idx) for step_idx in range(len(step_list))])
+        self.episodes = [d for d in Path(root).glob('*') if d.is_dir() and include_episode(d)]
+        self.samples = [f for e in self.episodes for f in e.glob(f'*{file_ext}')]
         self.obs_type = obs_type
         self.transform = transform
         if self.obs_type != ObsType.COMBINED_GRADIENT_OBS:
@@ -87,8 +93,7 @@ class AlphaGoosePretrainDataset(Dataset):
                              'they will need different data concatenation')
 
     def __getitem__(self, index: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        episode_path, step_idx = self.samples[index]
-        step = read_json_lines(episode_path, step_idx)
+        step = read_json(self.samples[index])
 
         state = create_obs_tensor(step, self.obs_type)
         actions = []

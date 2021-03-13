@@ -145,14 +145,15 @@ def get_most_recent_weights_file(weights_dir: Path) -> Path:
 
 def multiprocess_alphagoose_data_generator(
         n_workers: int,
-        dataset_path: Path,
-        max_saved_steps: int,
+        dataset_dir: Path,
+        max_saved_episodes: int,
         **data_generator_kwargs
 ):
     mp.set_start_method('spawn')
     os.environ['OMP_NUM_THREADS'] = '1'
-    if dataset_path.exists():
-        raise RuntimeError(f'data_dir already exists: {dataset_path}')
+    if dataset_dir.exists() and any(list(dataset_dir.iterdir())):
+        raise RuntimeError(f'dataset_dir already exists and is not empty: {dataset_dir}')
+    dataset_dir.mkdir(exist_ok=True)
 
     save_episode_queue = mp.Queue()
     processes = []
@@ -166,18 +167,19 @@ def multiprocess_alphagoose_data_generator(
         p.start()
         processes.append(p)
 
-    all_steps = []
-    steps_batch = []
+    saved_episode_counter = 0
+    episode_batch = []
     while True:
-        steps_batch.extend(save_episode_queue.get())
-        # Save steps in batches of 1000+
-        if len(steps_batch) >= 1000:
-            save_start_time = time.time()
-            all_steps.extend(steps_batch)
-            if len(all_steps) > max_saved_steps:
-                all_steps = all_steps[-max_saved_steps:]
-            with FileLock(str(dataset_path) + '.lock'):
-                with open(dataset_path, 'w') as f:
-                    ujson.dump(all_steps, f)
-            print(f'Saved {len(steps_batch)} train examples in {time.time() - save_start_time:.2} seconds')
-            steps_batch = []
+        episode_batch.append(save_episode_queue.get())
+        if len(episode_batch) >= 1:
+            with FileLock(str(dataset_dir) + '.lock'):
+                save_start_time = time.time()
+                # Empty queue items that arrived while waiting for the lock
+                while not save_episode_queue.empty():
+                    episode_batch.append(save_episode_queue.get())
+                for episode in episode_batch:
+                    with open(dataset_dir / f'{saved_episode_counter}.ljson', 'w') as f:
+                        f.writelines([ujson.dumps(step) + '\n' for step in episode])
+                    saved_episode_counter = (saved_episode_counter + 1) % max_saved_episodes
+            print(f'Saved {len(episode_batch)} episodes in {time.time() - save_start_time:.2} seconds')
+            episode_batch = []

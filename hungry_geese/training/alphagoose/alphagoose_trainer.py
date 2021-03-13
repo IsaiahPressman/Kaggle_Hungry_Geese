@@ -1,4 +1,5 @@
 import base64
+from filelock import FileLock
 from kaggle_environments import make
 import numpy as np
 import os
@@ -29,7 +30,6 @@ class AlphaGooseTrainer:
             dataset_kwargs: Dict,
             dataloader_kwargs: Dict,
             min_saved_steps: int = int(2.5e5),
-            max_saved_steps: int = int(1e6),
             policy_weight: float = 1.,
             value_weight: float = 1.,
             device: torch.device = torch.device('cuda'),
@@ -48,8 +48,6 @@ class AlphaGooseTrainer:
         self.dataset_kwargs = dataset_kwargs
         self.dataloader_kwargs = dataloader_kwargs
         self.min_saved_steps = min_saved_steps
-        self.max_saved_steps = max_saved_steps
-        assert self.min_saved_steps < self.max_saved_steps
         self.policy_weight = policy_weight
         assert self.policy_weight >= 0.
         self.value_weight = value_weight
@@ -118,69 +116,76 @@ class AlphaGooseTrainer:
             )
 
     def train(self, n_epochs: int) -> NoReturn:
+        lock = FileLock(str(self.dataset_kwargs['dataset_dir']) + '.lock')
         for epoch in range(n_epochs):
-            while not Path(self.dataset_kwargs['dataset_path']).exists():
-                print(f'No samples found yet in {self.dataset_kwargs["dataset_path"]}')
-                time.sleep(20.)
-            epoch_start_time = time.time()
-            dataset = AlphaGooseDataset(**self.dataset_kwargs)
-            while len(dataset) < self.min_saved_steps:
+            lock.acquire()
+            try:
                 epoch_start_time = time.time()
                 dataset = AlphaGooseDataset(**self.dataset_kwargs)
-                if len(dataset) < self.min_saved_steps:
-                    print(f'Only {len(dataset)} out of {self.min_saved_steps} minimum samples found. Sleeping...')
-                    time.sleep(20.)
-            dataloader = DataLoader(dataset, **self.dataloader_kwargs)
-            self.model.train()
-            train_metrics = {
-                'policy_loss': [],
-                'value_loss': [],
-                'combined_loss': []
-            }
-            for train_tuple in tqdm(dataloader, desc=f'Epoch #{epoch} train'):
-                self.optimizer.zero_grad()
-                policy_loss, value_loss, combined_loss = self.compute_losses(
-                    *[t.to(device=self.device, non_blocking=True) for t in train_tuple]
+                while len(dataset) < self.min_saved_steps:
+                    epoch_start_time = time.time()
+                    dataset = AlphaGooseDataset(**self.dataset_kwargs)
+                    if len(dataset) < self.min_saved_steps:
+                        print(f'Only {len(dataset)} out of {self.min_saved_steps} minimum samples found. Sleeping...')
+                        lock.release()
+                        time.sleep(20.)
+                        lock.acquire()
+                dataloader = DataLoader(dataset, **self.dataloader_kwargs)
+                self.model.train()
+                train_metrics = {
+                    'policy_loss': [],
+                    'value_loss': [],
+                    'combined_loss': []
+                }
+                for train_tuple in tqdm(dataloader, desc=f'Epoch #{epoch} train'):
+                    self.optimizer.zero_grad()
+                    policy_loss, value_loss, combined_loss = self.compute_losses(
+                        *[t.to(device=self.device, non_blocking=True) for t in train_tuple]
+                    )
+                    if self.use_mixed_precision:
+                        self.grad_scaler.scale(combined_loss).backward()
+                        if self.clip_grads is not None:
+                            self.grad_scaler.unscale_(self.optimizer)
+                            torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.clip_grads)
+                        self.grad_scaler.step(self.optimizer)
+                        self.grad_scaler.update()
+                    else:
+                        combined_loss.backward()
+                        if self.clip_grads is not None:
+                            torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.clip_grads)
+                        self.optimizer.step()
+                    with warnings.catch_warnings():
+                        warnings.filterwarnings('ignore', category=UserWarning)
+                        self.lr_scheduler.step()
+
+                    train_metrics['policy_loss'].append(policy_loss.detach().cpu().item())
+                    train_metrics['value_loss'].append(value_loss.detach().cpu().item())
+                    train_metrics['combined_loss'].append(combined_loss.detach().cpu().item())
+                    self.batch_counter += 1
+                self.log_train(train_metrics, len(dataloader))
+
+                if self.epoch_counter % self.checkpoint_freq == 0 and self.epoch_counter > 0:
+                    self.checkpoint()
+                epoch_time = time.time() - epoch_start_time
+                self.summary_writer.add_scalar('Time/epoch_time_minutes',
+                                               epoch_time / 60.,
+                                               self.epoch_counter)
+                self.summary_writer.add_scalar(
+                    'Time/batch_time_ms',
+                    1000. * epoch_time / (len(dataloader)),
+                    self.epoch_counter
                 )
-                if self.use_mixed_precision:
-                    self.grad_scaler.scale(combined_loss).backward()
-                    if self.clip_grads is not None:
-                        self.grad_scaler.unscale_(self.optimizer)
-                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.clip_grads)
-                    self.grad_scaler.step(self.optimizer)
-                    self.grad_scaler.update()
-                else:
-                    combined_loss.backward()
-                    if self.clip_grads is not None:
-                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.clip_grads)
-                    self.optimizer.step()
-                with warnings.catch_warnings():
-                    warnings.filterwarnings('ignore', category=UserWarning)
-                    self.lr_scheduler.step()
-
-                train_metrics['policy_loss'].append(policy_loss.detach().cpu().item())
-                train_metrics['value_loss'].append(value_loss.detach().cpu().item())
-                train_metrics['combined_loss'].append(combined_loss.detach().cpu().item())
-                self.batch_counter += 1
-            self.log_train(train_metrics, len(dataloader))
-
-            if self.epoch_counter % self.checkpoint_freq == 0 and self.epoch_counter > 0:
-                self.checkpoint()
-            epoch_time = time.time() - epoch_start_time
-            self.summary_writer.add_scalar('Time/epoch_time_minutes',
-                                           epoch_time / 60.,
-                                           self.epoch_counter)
-            self.summary_writer.add_scalar(
-                'Time/batch_time_ms',
-                1000. * epoch_time / (len(dataloader)),
-                self.epoch_counter
-            )
-            self.summary_writer.add_scalar(
-                'Time/sample_time_ms',
-                1000. * epoch_time / len(dataset),
-                self.epoch_counter
-            )
-            self.epoch_counter += 1
+                self.summary_writer.add_scalar(
+                    'Time/sample_time_ms',
+                    1000. * epoch_time / len(dataset),
+                    self.epoch_counter
+                )
+                self.epoch_counter += 1
+                # Sleep to allow the data_generator to acquire the lock and save the latest episodes
+                lock.release()
+                time.sleep(1.)
+            finally:
+                lock.release(force=True)
 
     def compute_losses(
             self,
