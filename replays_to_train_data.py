@@ -68,8 +68,8 @@ def batch_split_replay_files(replay_paths: List[Path], save_dir: Path, force: bo
             print(f'Unable to save replay {rp.name}:')
             replay_paths.remove(rp)
             print(e)
-        except ValueError as e:
-            print(f'Unable to save empty/malformed replay {rp.name} - deleting')
+        except ValueError:
+            print(f'Unable to save empty or malformed replay {rp.name} - deleting')
             replay_paths.remove(rp)
             os.remove(rp)
 
