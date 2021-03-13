@@ -69,9 +69,8 @@ def batch_split_replay_files(replay_paths: List[Path], save_dir: Path, force: bo
             replay_paths.remove(rp)
             print(e)
         except ValueError as e:
-            print(f'Unable to save empty replay {rp.name} - deleting:')
+            print(f'Unable to save empty/malformed replay {rp.name} - deleting')
             replay_paths.remove(rp)
-            print(e)
             os.remove(rp)
 
     all_replay_names = list(set([rp.stem for rp in all_replay_paths]))
@@ -122,7 +121,7 @@ if __name__ == '__main__':
         'replay_paths',
         nargs='+',
         type=Path,
-        help='A list of JSON replay file paths'
+        help='A list of JSON replay file paths, or a relative glob pattern to match to find all replay paths'
     )
     parser.add_argument(
         '-f',
@@ -146,6 +145,8 @@ if __name__ == '__main__':
              'Default: episode_scraping/metadata'
     )
     args = parser.parse_args()
+    if len(args.replay_paths) == 1:
+        args.replay_paths = list(Path('.').glob(str(args.replay_paths[0])))
     if args.threshold is not None:
         selected_replay_paths = select_episodes(args.replay_paths, args.metadata_path, args.threshold)
     else:
