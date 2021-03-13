@@ -33,6 +33,7 @@ class SupervisedPretraining:
             device: torch.device = torch.device('cuda'),
             use_mixed_precision: bool = True,
             grad_scaler: amp.grad_scaler = amp.GradScaler(),
+            clip_grads: Optional[float] = 10.,
             exp_folder: Path = Path('runs/supervised_pretraining/TEMP'),
             checkpoint_freq: int = 10,
             checkpoint_render_n_games: int = 10
@@ -52,6 +53,9 @@ class SupervisedPretraining:
         self.device = device
         self.use_mixed_precision = use_mixed_precision
         self.grad_scaler = grad_scaler
+        self.clip_grads = clip_grads
+        if self.clip_grads is not None and self.clip_grads < 1.:
+            raise ValueError(f'Clip_grads should be None for no clipping or >= 1, was {self.clip_grads:.2f}')
         self.exp_folder = exp_folder.absolute()
         if self.exp_folder.name == 'TEMP':
             print('WARNING: Using TEMP exp_folder')
@@ -109,10 +113,15 @@ class SupervisedPretraining:
                 )
                 if self.use_mixed_precision:
                     self.grad_scaler.scale(combined_loss).backward()
+                    if self.clip_grads is not None:
+                        self.grad_scaler.unscale_(self.optimizer)
+                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.clip_grads)
                     self.grad_scaler.step(self.optimizer)
                     self.grad_scaler.update()
                 else:
                     combined_loss.backward()
+                    if self.clip_grads is not None:
+                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.clip_grads)
                     self.optimizer.step()
                 with warnings.catch_warnings():
                     warnings.filterwarnings('ignore', category=UserWarning)
