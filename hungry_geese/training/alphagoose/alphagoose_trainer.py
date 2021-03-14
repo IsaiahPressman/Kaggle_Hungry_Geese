@@ -164,6 +164,8 @@ class AlphaGooseTrainer:
                     self.batch_counter += 1
                 self.log_train(train_metrics, len(dataloader))
 
+                # Release lock to allow the data_generator to acquire the lock and save the latest episodes
+                lock.release()
                 if self.epoch_counter % self.checkpoint_freq == 0 and self.epoch_counter > 0:
                     self.checkpoint()
                 epoch_time = time.time() - epoch_start_time
@@ -181,8 +183,7 @@ class AlphaGooseTrainer:
                     self.epoch_counter
                 )
                 self.epoch_counter += 1
-                # Sleep to allow the data_generator to acquire the lock and save the latest episodes
-                lock.release()
+                # Sleep to make sure the data_generator has time to acquire the lock and save the latest episodes
                 time.sleep(1.)
             finally:
                 lock.release(force=True)

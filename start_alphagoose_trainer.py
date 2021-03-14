@@ -47,19 +47,18 @@ if __name__ == '__main__':
     model.to(device=DEVICE)
     optimizer = torch.optim.SGD(
         model.parameters(),
-        lr=0.002,
+        lr=0.05,
         momentum=0.9,
         weight_decay=1e-4
     )
     # NB: lr_scheduler counts steps in batches, not epochs
     lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(
         optimizer,
-        # Stop reducing LR beyond 2e-4
-        milestones=[200000 * i for i in [2]],
+        milestones=[200000 * i for i in [2, 3]],
         gamma=0.1
     )
     dataset_kwargs = dict(
-        dataset_path='/home/isaiah/data/alphagoose_data.json',
+        dataset_dir='/home/isaiah/data/alphagoose_data',
         obs_type=obs_type,
         transform=transforms.Compose([
             AlphaGooseRandomReflect(obs_type),
@@ -69,7 +68,7 @@ if __name__ == '__main__':
     dataloader_kwargs = dict(
         batch_size=512,
         shuffle=True,
-        num_workers=2,
+        num_workers=6,
         pin_memory=True
     )
 
@@ -88,9 +87,9 @@ if __name__ == '__main__':
         device=DEVICE,
         use_mixed_precision=True,
         exp_folder=exp_folder,
-        min_saved_steps=2000,
-        checkpoint_freq=5,
-        checkpoint_render_n_games=2,
+        # min_saved_steps=1000,
+        checkpoint_freq=1,
+        checkpoint_render_n_games=0,
     )
 
     try:
