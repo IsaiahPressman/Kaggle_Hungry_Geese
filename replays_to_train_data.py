@@ -34,8 +34,8 @@ def process_replay_file(replay_dict: Dict) -> List[List[Dict]]:
     return env.steps[:-1]
 
 
-def batch_split_replay_files(replay_paths: List[Path], save_dir: Path, force: bool) -> NoReturn:
-    all_replay_paths = copy(replay_paths)
+def batch_split_replay_files(replay_paths_to_save: List[Path], save_dir: Path, force: bool, delete: bool) -> NoReturn:
+    all_replay_paths_to_save = copy(replay_paths_to_save)
     saved_replay_names = []
     if save_dir.exists():
         assert save_dir.is_dir()
@@ -44,7 +44,7 @@ def batch_split_replay_files(replay_paths: List[Path], save_dir: Path, force: bo
             if (save_dir / 'all_processed_episodes.txt').is_file():
                 with open(save_dir / 'all_processed_episodes.txt', 'r') as f:
                     already_processed.update([replay_name.rstrip() for replay_name in f.readlines()])
-                replay_paths = [rp for rp in replay_paths if rp.stem not in already_processed]
+                replay_paths_to_save = [rp for rp in replay_paths_to_save if rp.stem not in already_processed]
             if (save_dir / 'all_saved_episodes.txt').is_file():
                 with open(save_dir / 'all_saved_episodes.txt', 'r') as f:
                     saved_replay_names.extend([replay_name.rstrip() for replay_name in f.readlines()])
@@ -52,8 +52,8 @@ def batch_split_replay_files(replay_paths: List[Path], save_dir: Path, force: bo
         save_dir.mkdir()
 
     step_counter = 0
-    print(f'Processing {len(replay_paths)} replays and saving output to {save_dir.absolute()}')
-    for rp in tqdm.tqdm(copy(replay_paths)):
+    print(f'Processing {len(replay_paths_to_save)} replays and saving output to {save_dir.absolute()}')
+    for rp in tqdm.tqdm(copy(replay_paths_to_save)):
         try:
             episode = process_replay_file(read_json(rp))
             save_file_name = save_dir / (rp.stem + '.ljson')
@@ -66,22 +66,30 @@ def batch_split_replay_files(replay_paths: List[Path], save_dir: Path, force: bo
                 raise RuntimeError(f'Replay already exists and force is False: {(save_dir / rp.name)}')
         except (kaggle_environments.errors.InvalidArgument, RuntimeError) as e:
             print(f'Unable to save replay {rp.name}:')
-            replay_paths.remove(rp)
+            replay_paths_to_save.remove(rp)
             print(e)
         except ValueError:
             print(f'Unable to save empty or malformed replay {rp.name} - deleting')
-            all_replay_paths.remove(rp)
+            all_replay_paths_to_save.remove(rp)
             os.remove(rp)
 
-    all_replay_names = list(set([rp.stem for rp in all_replay_paths]))
+    all_replay_names = list(set([rp.stem for rp in all_replay_paths_to_save]))
     saved_replay_names = list(set(saved_replay_names))
+    if delete:
+        found_episodes = list(save_dir.glob('*.ljson'))
+        for ep_path in found_episodes:
+            if ep_path.stem not in all_replay_names:
+                os.remove(ep_path)
+                if ep_path.stem in saved_replay_names:
+                    saved_replay_names.remove(ep_path.stem)
+
     all_replay_names.sort(key=lambda rn: int(rn))
     saved_replay_names.sort(key=lambda rn: int(rn))
     with open(save_dir / 'all_processed_episodes.txt', 'w') as f:
         f.writelines([f'{rn}\n' for rn in all_replay_names])
     with open(save_dir / 'all_saved_episodes.txt', 'w') as f:
         f.writelines([f'{rn}\n' for rn in saved_replay_names])
-    print(f'Successfully saved {step_counter:,} steps from {len(replay_paths)} replays.')
+    print(f'Successfully saved {step_counter:,} steps from {len(replay_paths_to_save)} replays.')
     print(f'{len(saved_replay_names)} out of {len(all_replay_names)} replays saved in total.')
 
 
@@ -124,10 +132,16 @@ if __name__ == '__main__':
         help='A list of JSON replay file paths, or a relative glob pattern to match to find all replay paths'
     )
     parser.add_argument(
+        '-d',
+        '--delete',
+        action='store_true',
+        help='Including this option will delete episodes that no longer qualify for the given threshold'
+    )
+    parser.add_argument(
         '-f',
         '--force',
         action='store_true',
-        help='Including this option will overwrite existing folders'
+        help='Including this option will overwrite existing saved episodes'
     )
     parser.add_argument(
         '-t',
@@ -151,4 +165,4 @@ if __name__ == '__main__':
         selected_replay_paths = select_episodes(args.replay_paths, args.metadata_path, args.threshold)
     else:
         selected_replay_paths = args.replay_paths
-    batch_split_replay_files(selected_replay_paths, args.save_dir, args.force)
+    batch_split_replay_files(selected_replay_paths, args.save_dir, args.force, args.delete)
