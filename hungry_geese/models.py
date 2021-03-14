@@ -343,7 +343,19 @@ class FullConvActorCriticNetwork(nn.Module):
                 values * 1.2,
                 values
             )
-            # Finally rescale values from the range [0., 1] to the range [-1., 1]
+            # After the value multiplication, the winning goose may have a value > 1
+            # This "excess" value is redistributed evenly among the other geese
+            max_vals = values.max(dim=-1, keepdim=True)[0]
+            values = torch.where(
+                max_vals > 1.,
+                torch.where(
+                    values == max_vals,
+                    values - (max_vals - 1.),
+                    values + (max_vals - 1.) / still_alive.sum(dim=-1, keepdim=True)
+                ),
+                values
+            )
+            # Rescale values from the range [0., 1] to the range [-1., 1]
             return logits, 2. * values - 1.
         else:
             return logits, self.value_activation(values) * self.value_scale + self.value_shift
