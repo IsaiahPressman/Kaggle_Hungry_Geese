@@ -351,7 +351,7 @@ class FullConvActorCriticNetwork(nn.Module):
                 torch.where(
                     values == max_vals,
                     values - (max_vals - 1.),
-                    values + (max_vals - 1.) / still_alive.sum(dim=-1, keepdim=True)
+                    values + (max_vals - 1.) / (still_alive.sum(dim=-1, keepdim=True) - 1.)
                 ),
                 values
             )
