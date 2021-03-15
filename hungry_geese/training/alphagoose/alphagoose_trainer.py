@@ -116,7 +116,7 @@ class AlphaGooseTrainer:
             )
 
     def train(self, n_epochs: int) -> NoReturn:
-        lock = FileLock(str(self.dataset_kwargs['dataset_dir']) + '.lock')
+        lock = FileLock(str(Path(self.dataset_kwargs['dataset_dir'])) + '.lock')
         for epoch in range(n_epochs):
             lock.acquire()
             try:
