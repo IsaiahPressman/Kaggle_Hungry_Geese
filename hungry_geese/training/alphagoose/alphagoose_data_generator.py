@@ -108,7 +108,12 @@ def alphagoose_data_generator_worker(
         if current_weights_path != latest_weights_path:
             reload_start_time = time.time()
             current_weights_path = latest_weights_path
-            model.load_state_dict(torch.load(current_weights_path, map_location=device))
+            try:
+                model.load_state_dict(torch.load(current_weights_path, map_location=device))
+            # In case the model weights are being saved at the same moment that they are being reloaded
+            except EOFError:
+                time.sleep(0.1)
+                model.load_state_dict(torch.load(current_weights_path, map_location=device))
             model.eval()
             print(f'{worker_id}: Reloaded model {current_weights_path.name} in '
                   f'{time.time() - reload_start_time:.2f} seconds')

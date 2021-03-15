@@ -56,7 +56,7 @@ if __name__ == '__main__':
         n_envs_per_worker=20,
         weights_dir=weights_dir,
         obs_type=obs_type,
-        model_reload_freq=100,
+        model_reload_freq=10,
         n_iter=50,
         include_food=False,
         add_noise=False,
