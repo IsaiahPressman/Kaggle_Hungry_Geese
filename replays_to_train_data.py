@@ -73,8 +73,8 @@ def batch_split_replay_files(replay_paths_to_save: List[Path], save_dir: Path, f
             all_replay_paths_to_save.remove(rp)
             os.remove(rp)
 
-    all_replay_names = list(set([rp.stem for rp in all_replay_paths_to_save]))
-    saved_replay_names = list(set(saved_replay_names))
+    all_replay_names = set([rp.stem for rp in all_replay_paths_to_save])
+    saved_replay_names = set(saved_replay_names)
     if delete:
         found_episodes = list(save_dir.glob('*.ljson'))
         for ep_path in found_episodes:
@@ -83,8 +83,8 @@ def batch_split_replay_files(replay_paths_to_save: List[Path], save_dir: Path, f
                 if ep_path.stem in saved_replay_names:
                     saved_replay_names.remove(ep_path.stem)
 
-    all_replay_names.sort(key=lambda rn: int(rn))
-    saved_replay_names.sort(key=lambda rn: int(rn))
+    all_replay_names = sorted(list(all_replay_names), key=lambda rn: int(rn))
+    saved_replay_names = sorted(list(saved_replay_names), key=lambda rn: int(rn))
     with open(save_dir / 'all_processed_episodes.txt', 'w') as f:
         f.writelines([f'{rn}\n' for rn in all_replay_names])
     with open(save_dir / 'all_saved_episodes.txt', 'w') as f:
