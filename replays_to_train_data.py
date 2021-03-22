@@ -1,6 +1,9 @@
 import argparse
 from copy import copy
-import ujson
+try:
+    import ujson as json
+except ModuleNotFoundError:
+    import json
 import kaggle_environments
 import numpy as np
 import os
@@ -59,7 +62,7 @@ def batch_split_replay_files(replay_paths_to_save: List[Path], save_dir: Path, f
             save_file_name = save_dir / (rp.stem + '.ljson')
             if not save_file_name.exists() or force:
                 with open(save_file_name, 'w') as f:
-                    f.writelines([ujson.dumps(step) + '\n' for step in episode])
+                    f.writelines([json.dumps(step) + '\n' for step in episode])
                 step_counter += len(episode)
                 saved_replay_names.append(rp.stem)
             else:

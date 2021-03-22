@@ -1,6 +1,9 @@
 import copy
 from filelock import FileLock
-import ujson
+try:
+    import ujson as json
+except ModuleNotFoundError:
+    import json
 import torch.multiprocessing as mp
 import numpy as np
 import os
@@ -184,7 +187,7 @@ def multiprocess_alphagoose_data_generator(
                     episode_batch.append(save_episode_queue.get())
                 for episode in episode_batch:
                     with open(dataset_dir / f'{saved_episode_counter}.ljson', 'w') as f:
-                        f.writelines([ujson.dumps(step) + '\n' for step in episode])
+                        f.writelines([json.dumps(step) + '\n' for step in episode])
                     saved_episode_counter = (saved_episode_counter + 1) % max_saved_episodes
             print(f'Saved {len(episode_batch)} episodes in {time.time() - save_start_time:.2} seconds')
             episode_batch = []

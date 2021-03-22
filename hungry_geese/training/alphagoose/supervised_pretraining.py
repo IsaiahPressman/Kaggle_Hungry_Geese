@@ -308,10 +308,11 @@ class SupervisedPretraining:
         if finished:
             save_dir = save_dir / f'final_{self.epoch_counter}'
             save_dir.mkdir()
-        # Save model params
+        # Save model params as .txt and .pt
         self.model.cpu()
         state_dict_bytes = pickle.dumps(self.model.state_dict())
         serialized_string = base64.b64encode(state_dict_bytes)
         with open(save_dir / 'cp.txt', 'w') as f:
             f.write(str(serialized_string))
+        torch.save(self.model.state_dict(), save_dir / 'cp.pt')
         self.model.to(device=self.device)

@@ -1,5 +1,8 @@
 from enum import *
-import ujson
+try:
+    import ujson as json
+except ModuleNotFoundError:
+    import json
 from kaggle_environments.envs.hungry_geese.hungry_geese import Action
 from kaggle_environments.envs.hungry_geese.hungry_geese import row_col as _row_col
 from numbers import Number
@@ -90,12 +93,12 @@ def print_array_one_line(arr: Union[np.ndarray, Number]) -> str:
 
 def read_json(file_path: Union[str, Path]):
     with open(file_path, 'rb') as f:
-        return ujson.load(f)
+        return json.load(f)
 
 
 def read_json_lines(file_path: Union[str, Path], line_idx: int):
     with open(file_path, 'rb') as f:
-        return ujson.loads(f.readlines()[line_idx])
+        return json.loads(f.readlines()[line_idx])
 
 
 def format_experiment_name(obs_type,
