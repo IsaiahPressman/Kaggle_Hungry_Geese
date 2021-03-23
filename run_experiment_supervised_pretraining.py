@@ -17,14 +17,35 @@ if __name__ == '__main__':
     DEVICE = torch.device('cuda')
 
     obs_type = ge.ObsType.COMBINED_GRADIENT_OBS
-    n_channels = 128
+    n_channels = 256
     activation = nn.ReLU
-    normalize = True
+    normalize = False
     model_kwargs = dict(
         block_class=models.BasicConvolutionalBlock,
         conv_block_kwargs=[
             dict(
                 in_channels=obs_type.get_obs_spec()[-3],
+                out_channels=n_channels,
+                kernel_size=3,
+                activation=activation,
+                normalize=normalize
+            ),
+            dict(
+                in_channels=n_channels,
+                out_channels=n_channels,
+                kernel_size=3,
+                activation=activation,
+                normalize=normalize
+            ),
+            dict(
+                in_channels=n_channels,
+                out_channels=n_channels,
+                kernel_size=3,
+                activation=activation,
+                normalize=normalize
+            ),
+            dict(
+                in_channels=n_channels,
                 out_channels=n_channels,
                 kernel_size=3,
                 activation=activation,
@@ -61,15 +82,15 @@ if __name__ == '__main__':
     model.to(device=DEVICE)
     optimizer = torch.optim.SGD(
         model.parameters(),
-        lr=0.1,
+        lr=0.05,
         momentum=0.9,
         weight_decay=1e-4
     )
     # NB: lr_scheduler counts steps in batches, not epochs
     lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(
         optimizer,
-        # Stop reducing LR beyond 1e-5
-        milestones=[150000*i for i in range(1, 5)],
+        # Stop reducing LR beyond 5e-4
+        milestones=[150000*i for i in range(1, 3)],
         gamma=0.1
     )
 
@@ -102,14 +123,14 @@ if __name__ == '__main__':
         shuffle=True,
         pin_memory=True
     )
-    train_dataloader = DataLoader(train_dataset, num_workers=6, **dataloader_kwargs)
+    train_dataloader = DataLoader(train_dataset, num_workers=8, **dataloader_kwargs)
     test_dataloader = DataLoader(test_dataset, num_workers=14, **dataloader_kwargs)
 
     experiment_name = 'supervised_pretraining_' + format_experiment_name(obs_type,
                                                                          ge.RewardType.RANK_ON_DEATH,
                                                                          ge.ActionMasking.NONE,
                                                                          [n_channels],
-                                                                         model_kwargs['conv_block_kwargs']) + '_v5'
+                                                                         model_kwargs['conv_block_kwargs']) + '_v0'
     exp_folder = Path(f'runs/supervised_pretraining/active/{experiment_name}')
     train_alg = SupervisedPretraining(
         model=model,
@@ -119,11 +140,12 @@ if __name__ == '__main__':
         test_dataloader=test_dataloader,
         policy_weight=1.,
         value_weight=1.,
-        entropy_weight=0.05,
+        entropy_weight=0.1,
         device=DEVICE,
         use_mixed_precision=True,
         exp_folder=exp_folder,
-        checkpoint_freq=10,
+        clip_grads=10.,
+        checkpoint_freq=5,
         checkpoint_render_n_games=2
     )
     this_script = Path(__file__).absolute()
