@@ -16,6 +16,11 @@ class Node:
     ):
         self.geese_still_playing = np.array(geese_still_playing_mask)
         self.n_geese = len(self.geese_still_playing)
+        self.virtual_loss_multiplier = np.linspace(
+                -1.,
+                1.,
+                self.n_geese
+        )[np.logical_not(self.geese_still_playing).sum()]
         assert self.geese_still_playing.any()
         if available_actions_masks is None:
             self.available_actions_masks = np.ones_like(initial_policies)
@@ -51,7 +56,7 @@ class Node:
         self.q_vals = np.zeros_like(self.initial_policies)
         self.n_visits = np.zeros_like(self.initial_policies)
 
-    def update(self, actions: np.ndarray, values: np.ndarray) -> NoReturn:
+    def update(self, actions: np.ndarray, values: np.ndarray, virtual_loss: float) -> NoReturn:
         if actions.shape != (self.n_geese,):
             raise RuntimeError(f'Actions should be of shape {(self.n_geese,)}, got {actions.shape}')
         if values.ndim == 1:
@@ -65,8 +70,18 @@ class Node:
             raise RuntimeError(f'Values for dead geese should always be less than those for still living geese.\n'
                                f'Values:\n{values.ravel()}\n'
                                f'Geese still playing:\n{self.geese_still_playing}\n')
+        assert virtual_loss >= 0, f'virtual_loss must be >= 0, was {virtual_loss}'
 
         selected_actions_mask = np.eye(4)[actions]
+        virtual_value = virtual_loss * self.virtual_loss_multiplier
+        # First undo virtual_loss
+        self.q_vals = np.where(
+            selected_actions_mask,
+            (self.n_visits * self.q_vals - virtual_value) / (self.n_visits - virtual_loss),
+            self.q_vals
+        )
+        self.n_visits -= selected_actions_mask * virtual_loss
+        # Then update normally
         self.q_vals = np.where(
             selected_actions_mask,
             (self.n_visits * self.q_vals + values) / (self.n_visits + 1.),
@@ -74,7 +89,21 @@ class Node:
         )
         self.n_visits += selected_actions_mask
 
-    def get_puct_actions(self, c_puct: float) -> np.ndarray:
+    def virtual_visit(self, actions: np.ndarray, virtual_loss: float) -> NoReturn:
+        if actions.shape != (self.n_geese,):
+            raise RuntimeError(f'Actions should be of shape {(self.n_geese,)}, got {actions.shape}')
+        assert virtual_loss >= 0, f'virtual_loss must be >= 0, was {virtual_loss}'
+        
+        selected_actions_mask = np.eye(4)[actions]
+        virtual_value = virtual_loss * self.virtual_loss_multiplier
+        self.q_vals = np.where(
+            selected_actions_mask,
+            (self.n_visits * self.q_vals + virtual_value) / (self.n_visits + virtual_loss),
+            self.q_vals
+        )
+        self.n_visits += selected_actions_mask * virtual_loss
+        
+    def get_puct_actions(self, c_puct: float, virtual_losses: np.ndarray) -> np.ndarray:
         uct_vals = self.q_vals + (c_puct *
                                   self.initial_policies *
                                   np.sqrt(self.n_visits.sum(axis=1, keepdims=True)) / (1. + self.n_visits))
@@ -149,6 +178,7 @@ class BasicMCTS:
             actor_critic_func: Callable,
             terminal_value_func: Callable,
             c_puct: float = 1.,
+            virtual_loss: float = 3.,
             add_noise: bool = False,
             noise_val: float = 2.,
             noise_weight: float = 0.25,
@@ -158,6 +188,7 @@ class BasicMCTS:
         self.actor_critic_func = actor_critic_func
         self.terminal_value_func = terminal_value_func
         self.c_puct = c_puct
+        self.virtual_loss = virtual_loss
         self.add_noise = add_noise
         self.noise_val = noise_val
         self.noise_weight = noise_weight
@@ -203,7 +234,7 @@ class BasicMCTS:
         a = node.get_puct_actions(self.c_puct).ravel()
         env.step(a)
         v = self._search(env)
-        node.update(a, v)
+        node.update(a, v, self.virtual_loss)
         return v
 
     def expand(
@@ -231,6 +262,7 @@ class BasicMCTS:
 
         a = node.get_puct_actions(self.c_puct).ravel()
         env.step(a)
+        node.virtual_visit(a, self.virtual_loss)
         return self.expand(env, trajectory + ((s, a),))
 
     def backpropagate(
@@ -244,7 +276,7 @@ class BasicMCTS:
         for i, (s, a) in enumerate(trajectory):
             if a is not None:
                 node = self.nodes[s]
-                node.update(a, value_est)
+                node.update(a, value_est, self.virtual_loss)
             else:
                 # Noise should only be added to the root node
                 if self.add_noise and i == 0:
