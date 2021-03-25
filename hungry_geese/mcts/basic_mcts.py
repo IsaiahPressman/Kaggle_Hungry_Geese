@@ -77,7 +77,11 @@ class Node:
         # First undo virtual_loss
         self.q_vals = np.where(
             selected_actions_mask,
-            (self.n_visits * self.q_vals - virtual_value) / (self.n_visits - virtual_loss),
+            np.where(
+                self.n_visits - virtual_loss > 0.,
+                (self.n_visits * self.q_vals - virtual_value) / (self.n_visits - virtual_loss),
+                0.
+            ),
             self.q_vals
         )
         self.n_visits -= selected_actions_mask * virtual_loss
@@ -93,17 +97,18 @@ class Node:
         if actions.shape != (self.n_geese,):
             raise RuntimeError(f'Actions should be of shape {(self.n_geese,)}, got {actions.shape}')
         assert virtual_loss >= 0, f'virtual_loss must be >= 0, was {virtual_loss}'
+
+        if virtual_loss != 0:
+            selected_actions_mask = np.eye(4)[actions]
+            virtual_value = virtual_loss * self.virtual_loss_multiplier
+            self.q_vals = np.where(
+                selected_actions_mask,
+                (self.n_visits * self.q_vals + virtual_value) / (self.n_visits + virtual_loss),
+                self.q_vals
+            )
+            self.n_visits += selected_actions_mask * virtual_loss
         
-        selected_actions_mask = np.eye(4)[actions]
-        virtual_value = virtual_loss * self.virtual_loss_multiplier
-        self.q_vals = np.where(
-            selected_actions_mask,
-            (self.n_visits * self.q_vals + virtual_value) / (self.n_visits + virtual_loss),
-            self.q_vals
-        )
-        self.n_visits += selected_actions_mask * virtual_loss
-        
-    def get_puct_actions(self, c_puct: float, virtual_losses: np.ndarray) -> np.ndarray:
+    def get_puct_actions(self, c_puct: float) -> np.ndarray:
         uct_vals = self.q_vals + (c_puct *
                                   self.initial_policies *
                                   np.sqrt(self.n_visits.sum(axis=1, keepdims=True)) / (1. + self.n_visits))
@@ -233,6 +238,7 @@ class BasicMCTS:
 
         a = node.get_puct_actions(self.c_puct).ravel()
         env.step(a)
+        node.virtual_visit(a, self.virtual_loss)
         v = self._search(env)
         node.update(a, v, self.virtual_loss)
         return v
@@ -300,6 +306,48 @@ class BasicMCTS:
             if time.time() - start_time >= max_time:
                 break
             self._search(env.lightweight_clone(), add_noise=self.add_noise)
+
+        return self.get_root_node(env)
+
+    def run_batch_mcts(
+            self,
+            env: LightweightEnv,
+            batch_size: int,
+            n_iter: int,
+            max_time: float = float('inf')
+    ) -> Node:
+        start_time = time.time()
+        for _ in range(n_iter):
+            if time.time() - start_time >= max_time:
+                break
+
+            if env.canonical_string_repr(include_food=self.include_food) not in self.nodes.keys():
+                corrected_batch_size = 1
+            else:
+                corrected_batch_size = batch_size
+            state_batch, trajectory_batch, done_batch, still_alive_batch, available_actions_batch = zip(
+                *[self.expand(env.lightweight_clone()) for b in range(corrected_batch_size)]
+            )
+            policies_batch, values_batch = self.actor_critic_func(state_batch)
+
+            for batch_idx in reversed(range(corrected_batch_size)):
+                backprop_kwargs = dict(
+                    trajectory=trajectory_batch[batch_idx],
+                    still_alive=still_alive_batch[batch_idx],
+                    available_actions=available_actions_batch[batch_idx]
+                )
+                if done_batch[batch_idx]:
+                    self.backpropagate(
+                        policy_est=None,
+                        value_est=self.terminal_value_func(state_batch[batch_idx]),
+                        **backprop_kwargs
+                    )
+                else:
+                    self.backpropagate(
+                        policy_est=policies_batch[batch_idx],
+                        value_est=values_batch[batch_idx],
+                        **backprop_kwargs
+                    )
 
         return self.get_root_node(env)
 
