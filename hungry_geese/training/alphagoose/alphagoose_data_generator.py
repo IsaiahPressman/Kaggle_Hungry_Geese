@@ -180,7 +180,8 @@ def save_episodes_worker(
                     with open(dataset_dir / f'{saved_episode_counter}.ljson', 'w') as f:
                         f.writelines([json.dumps(step) + '\n' for step in episode])
                     saved_episode_counter = (saved_episode_counter + 1) % max_saved_episodes
-            print(f'Saved {len(episode_batch)} episodes in {time.time() - save_start_time:.2} seconds')
+            print(f'Saved {len(episode_batch)} batch{"es" if len(episode_batch) != 1 else ""} in '
+                  f'{time.time() - save_start_time:.2} seconds')
             episode_batch = []
 
 
