@@ -164,9 +164,10 @@ def get_latest_weights_file(weights_dir: Path) -> Path:
 def save_episodes_worker(
         dataset_dir: Path,
         save_episode_queue: mp.Queue,
-        max_saved_episodes: int
+        max_saved_episodes: int,
+        start_idx: int = 0
 ) -> NoReturn:
-    saved_episode_counter = 0
+    saved_episode_counter = start_idx
     episode_batch = []
     while True:
         episode_batch.append(save_episode_queue.get())

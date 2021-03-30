@@ -59,5 +59,6 @@ if __name__ == '__main__':
         dataset_dir=dataset_dir,
         weights_dir=weights_dir,
         max_saved_batches=10000,
-        obs_type=obs_type
+        obs_type=obs_type,
+        allow_resume=True
     )

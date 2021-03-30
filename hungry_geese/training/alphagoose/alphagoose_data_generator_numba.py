@@ -38,7 +38,7 @@ EXPLORATION = 1.0  # how much to prefer un/under-explored nodes
 
 
 # Self-play data generation parameters:
-ENVS = 128  # number of parallel self play environments
+ENVS = 64  # number of parallel self play environments
 NODES_PER_SEARCH_STEP = 8  # number of nodes each env evaluates at once
 SELFPLAY_SEARCH_ROUNDS = 25  # how many times to search each step
 BUFFER_SIZE = 262144  # this will hold ~1.3k episodes of data
@@ -857,6 +857,9 @@ def save_buffer_to_disk(I_bf, X_bf, P_bf, V_bf, save_steps_batch_queue):
     global buffer_ptr
     all_states = []
     for i in range(buffer_ptr):
+        if np.isnan(P_bf).any():
+            print('ERROR: NaN policy')
+            continue
         state_dict = get_state_dict_from_I_X_P_V(
             I_bf[i],
             X_bf[i],
@@ -959,8 +962,9 @@ def start_selfplay_loop(
         weights_dir: Path,
         max_saved_batches: int,
         obs_type: ge.ObsType = ge.ObsType.COMBINED_GRADIENT_OBS,
+        allow_resume: bool = False
 ):
-    # No-op _stopwatch
+    # No-op stopwatch
     stopwatch = Stopwatch(use_stopwatch=False)
 
     # NN global vars
@@ -975,14 +979,30 @@ def start_selfplay_loop(
 
     # Check that dataset_dir exists and is empty
     if dataset_dir.exists() and any(list(dataset_dir.iterdir())):
-        raise RuntimeError(f'dataset_dir already exists and is not empty: {dataset_dir}')
+        if not allow_resume:
+            raise RuntimeError(f'dataset_dir already exists and is not empty: {dataset_dir}')
+        # Check that the directory only contains replay data files
+        all_files = [f for f in dataset_dir.iterdir() if not f.stem.startswith('.')]
+        if not all([f.suffix == '.ljson' for f in all_files]):
+            raise RuntimeError(f'dataset_dir already exists and contains non-".ljson" files: {dataset_dir}')
+        # Check that the directory does not contain more replay data files than allowed by max_saved_batches
+        all_files.sort(key=lambda f: int(f.stem))
+        if int(all_files[-1].stem) >= max_saved_batches:
+            raise RuntimeError(f'dataset_dir already exists and contains files with id > max_saved_batches: '
+                               f'{dataset_dir} - {all_files[-1].stem} > {max_saved_batches}')
+        # Find the index to restart at
+        all_files.sort(key=lambda f: f.stat().st_ctime)
+        start_idx = (int(all_files[-1].stem) + 1) % max_saved_batches
+        print(f'Resuming data generation. Latest replay file: {all_files[-1].name}')
+    else:
+        start_idx = 0
     dataset_dir.mkdir(exist_ok=True)
 
     # Start the worker who will save batches of experience to disk
     save_steps_batch_queue = mp.Queue()
     save_steps_to_disk_worker = mp.Process(
         target=save_episodes_worker,
-        args=(dataset_dir, save_steps_batch_queue, max_saved_batches),
+        args=(dataset_dir, save_steps_batch_queue, max_saved_batches, start_idx),
     )
     save_steps_to_disk_worker.daemon = True
     save_steps_to_disk_worker.start()

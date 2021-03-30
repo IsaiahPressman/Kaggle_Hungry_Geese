@@ -29,7 +29,10 @@ class AlphaGooseDataset(Dataset):
 
     def __getitem__(self, index: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         episode_path, step_idx = self.samples[index]
-        step = read_json_lines(episode_path, step_idx)
+        try:
+            step = read_json_lines(episode_path, step_idx)
+        except ValueError:
+            raise ValueError(f'Could not read line {step_idx} from file {episode_path}')
 
         state = create_obs_tensor(step, self.obs_type)
         policies = []
