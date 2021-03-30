@@ -816,9 +816,13 @@ def get_state_dict_from_I_X_P_V(I, X, P, V):
                 if X[2 * i][mask] == 1:
                     break
             geese[i].reverse()
-            assert j < GOOSE_MAX_LEN - 1
+            if j >= GOOSE_MAX_LEN - 1:
+                print(f'ERROR: Invalid goose length {j}, {geese[i]}')
+                return None
         food = [f.item() for f in idx_array[X[-3] == 1]]
-        assert len(food) == 2
+        if len(food) != 2:
+            print(f'ERROR: Invalid food locations {food}, {X[-3]}')
+            return None
         agent_rankings = stats.rankdata(V, method='average') - 1.
         for i in range(N_PLAYERS):
             dict_i = {
@@ -853,12 +857,14 @@ def save_buffer_to_disk(I_bf, X_bf, P_bf, V_bf, save_steps_batch_queue):
     global buffer_ptr
     all_states = []
     for i in range(buffer_ptr):
-        all_states.append(get_state_dict_from_I_X_P_V(
+        state_dict = get_state_dict_from_I_X_P_V(
             I_bf[i],
             X_bf[i],
             P_bf[i],
             V_bf[i]
-        ))
+        )
+        if state_dict is not None:
+            all_states.append(state_dict)
 
     for i in range(0, len(all_states), 200):
         steps_batch = all_states[i:i+200]
