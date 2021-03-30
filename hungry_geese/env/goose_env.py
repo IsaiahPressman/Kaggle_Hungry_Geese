@@ -390,8 +390,6 @@ def create_obs_tensor(observation, obs_type):
                 head_loc = row_col(goose_loc_list[0])
                 player_channels[channel_idx_base + idx_dict['contains_head'],
                                 (*head_loc)] = 1.
-            # Check if the goose is more than just a head
-            if len(goose_loc_list) > 1:
                 for i, body_loc_n in enumerate(goose_loc_list[::-1]):
                     body_loc = row_col(body_loc_n)
                     player_channels[channel_idx_base + idx_dict['contains_body'],
