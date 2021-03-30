@@ -54,7 +54,7 @@ if __name__ == '__main__':
     # NB: lr_scheduler counts steps in batches, not epochs
     lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(
         optimizer,
-        milestones=[200000 * i for i in [2, 3]],
+        milestones=[200000 * i for i in [2, 4]],
         gamma=0.1
     )
     dataset_kwargs = dict(
@@ -68,7 +68,7 @@ if __name__ == '__main__':
     dataloader_kwargs = dict(
         batch_size=512,
         shuffle=True,
-        num_workers=6,
+        num_workers=4,
         pin_memory=True
     )
 
@@ -76,7 +76,7 @@ if __name__ == '__main__':
                                                              ge.RewardType.RANK_ON_DEATH,
                                                              ge.ActionMasking.LETHAL,
                                                              [n_channels],
-                                                             model_kwargs['conv_block_kwargs']) + '_v3'
+                                                             model_kwargs['conv_block_kwargs']) + '_v4'
     exp_folder = Path(f'runs/alphagoose/{experiment_name}')
     train_alg = AlphaGooseTrainer(
         model=model,

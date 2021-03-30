@@ -17,7 +17,7 @@ if __name__ == '__main__':
     DEVICE = torch.device('cuda')
 
     obs_type = ge.ObsType.COMBINED_GRADIENT_OBS
-    n_channels = 256
+    n_channels = 64
     activation = nn.ReLU
     normalize = False
     model_kwargs = dict(
@@ -25,6 +25,48 @@ if __name__ == '__main__':
         conv_block_kwargs=[
             dict(
                 in_channels=obs_type.get_obs_spec()[-3],
+                out_channels=n_channels,
+                kernel_size=3,
+                activation=activation,
+                normalize=normalize
+            ),
+            dict(
+                in_channels=n_channels,
+                out_channels=n_channels,
+                kernel_size=3,
+                activation=activation,
+                normalize=normalize
+            ),
+            dict(
+                in_channels=n_channels,
+                out_channels=n_channels,
+                kernel_size=3,
+                activation=activation,
+                normalize=normalize
+            ),
+            dict(
+                in_channels=n_channels,
+                out_channels=n_channels,
+                kernel_size=3,
+                activation=activation,
+                normalize=normalize
+            ),
+            dict(
+                in_channels=n_channels,
+                out_channels=n_channels,
+                kernel_size=3,
+                activation=activation,
+                normalize=normalize
+            ),
+            dict(
+                in_channels=n_channels,
+                out_channels=n_channels,
+                kernel_size=3,
+                activation=activation,
+                normalize=normalize
+            ),
+            dict(
+                in_channels=n_channels,
                 out_channels=n_channels,
                 kernel_size=3,
                 activation=activation,
@@ -82,7 +124,7 @@ if __name__ == '__main__':
     model.to(device=DEVICE)
     optimizer = torch.optim.SGD(
         model.parameters(),
-        lr=0.05,
+        lr=0.025,
         momentum=0.9,
         weight_decay=1e-4
     )
@@ -90,7 +132,7 @@ if __name__ == '__main__':
     lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(
         optimizer,
         # Stop reducing LR beyond 5e-4
-        milestones=[150000*i for i in range(1, 3)],
+        milestones=[150000*i for i in [1, 3]],
         gamma=0.1
     )
 
@@ -145,8 +187,8 @@ if __name__ == '__main__':
         use_mixed_precision=True,
         exp_folder=exp_folder,
         clip_grads=10.,
-        checkpoint_freq=5,
-        checkpoint_render_n_games=2
+        checkpoint_freq=10,
+        checkpoint_render_n_games=5
     )
     this_script = Path(__file__).absolute()
     shutil.copy(this_script, train_alg.exp_folder / f'_{this_script.name}')

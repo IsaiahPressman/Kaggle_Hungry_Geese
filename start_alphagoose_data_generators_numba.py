@@ -2,12 +2,13 @@ from pathlib import Path
 import torch
 from torch import nn
 
-from hungry_geese.training.alphagoose import alphagoose_data_generator as adg
+from hungry_geese.training.alphagoose.alphagoose_data_generator import get_latest_weights_file
+from hungry_geese.training.alphagoose.alphagoose_data_generator_numba import start_selfplay_loop
 from hungry_geese.env import goose_env as ge
 from hungry_geese import models
 
 if __name__ == '__main__':
-    DEVICE = torch.device('cuda')
+    device = torch.device('cuda')
 
     obs_type = ge.ObsType.COMBINED_GRADIENT_OBS
     n_channels = 128
@@ -41,24 +42,22 @@ if __name__ == '__main__':
         cross_normalize_value=True,
         # **ge.RewardType.RANK_ON_DEATH.get_recommended_value_activation_scale_shift_dict()
     )
+    model = models.FullConvActorCriticNetwork(**model_kwargs)
 
     weights_dir = Path(
-        'runs/alphagoose/alphagoose_combined_gradient_obs_rank_on_death_lethal_3_blocks_128_dims_v3/all_checkpoints_pt'
+        'runs/alphagoose/alphagoose_combined_gradient_obs_rank_on_death_lethal_3_blocks_128_dims_v4/all_checkpoints_pt'
     )
-    print(f'Loading initial model weights from: {adg.get_latest_weights_file(weights_dir)}')
+    print(f'Loading initial model weights from: {get_latest_weights_file(weights_dir)}')
 
-    adg.multiprocess_alphagoose_data_generator(
-        n_workers=5,
-        device=DEVICE,
-        dataset_dir=Path('/home/isaiah/data/alphagoose_data'),
-        max_saved_episodes=10000,
-        model_kwargs=model_kwargs,
-        n_envs_per_worker=20,
+    dataset_dir = Path('/home/isaiah/data/alphagoose_data')
+    dataset_dir.mkdir(exist_ok=True)
+    print(f'Saving self-play data to: {dataset_dir}')
+
+    start_selfplay_loop(
+        model=model,
+        device=device,
+        dataset_dir=dataset_dir,
         weights_dir=weights_dir,
-        obs_type=obs_type,
-        model_reload_freq=10,
-        n_iter=50,
-        include_food=False,
-        add_noise=False,
-        noise_val=1.,
+        max_saved_batches=10000,
+        obs_type=obs_type
     )

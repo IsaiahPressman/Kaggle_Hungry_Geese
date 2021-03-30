@@ -184,7 +184,7 @@ class AlphaGooseTrainer:
                 )
                 self.epoch_counter += 1
                 # Sleep to make sure the data_generator has time to acquire the lock and save the latest episodes
-                time.sleep(1.)
+                time.sleep(2.)
             finally:
                 lock.release(force=True)
 
