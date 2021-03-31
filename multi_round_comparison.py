@@ -151,7 +151,7 @@ if __name__ == '__main__':
         overall_mean_scores_out = f'Overall mean scores: {mean_score_1:.2f}{SEP}{mean_score_2:.2f}'
         std_score_1 = all_results[:, :2].std()
         std_score_2 = all_results[:, 2:].std()
-        overall_std_scores_out = f'Overall score standard deviations: {mean_score_1:.2f}{SEP}{mean_score_2:.2f}'
+        overall_std_scores_out = f'Overall score standard deviations: {std_score_1:.2f}{SEP}{std_score_2:.2f}'
         final_output_list.extend([small_vs_message, overall_mean_scores_out, overall_std_scores_out])
 
     final_output_list.extend([
