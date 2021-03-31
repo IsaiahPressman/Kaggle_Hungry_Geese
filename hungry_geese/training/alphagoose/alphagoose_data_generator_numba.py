@@ -224,7 +224,7 @@ class State:
 
         # are we done?
         self.done = False
-        if self.step >= MAX_NUM_STEPS:
+        if self.step >= MAX_NUM_STEPS - 1:
             self.done = True
         elif self.alive.sum() <= 1:
             self.done = True
@@ -914,7 +914,7 @@ def selfplay_loop(save_steps_batch_queue, stopwatch):
     stopwatch.start("initialise_envs")
     initialise_envs(STATES, TREES, env_done)
 
-    pbar = tqdm(total=MAX_NUM_STEPS * ENVS, desc=f'Steps in {ENVS} environments')
+    pbar = tqdm(total=(MAX_NUM_STEPS - 1) * ENVS, desc=f'Steps in {ENVS} environments')
     while not env_done.all():
         for _ in range(SELFPLAY_SEARCH_ROUNDS):
 
