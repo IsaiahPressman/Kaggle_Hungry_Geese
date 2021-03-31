@@ -102,7 +102,7 @@ if __name__ == '__main__':
     
     if args.n_workers == 1:
         results_and_game_lengths = []
-        init_worker(args.debug, args.save_dir)
+        init_worker(args.debug, save_dir)
         for i in tqdm.trange(args.n_games):
             results_and_game_lengths.append(get_game_result(agent_paths))
     else:
@@ -128,7 +128,6 @@ if __name__ == '__main__':
         print(f'Round {i+1}: {SEP.join([f"{r:.2f}" for r in ranks_rescaled])}')
     all_results = np.vstack(all_results)
 
-    print(vs_message)
     mean_scores_out = 'Mean scores: '
     for score in all_results.mean(axis=0):
         mean_scores_out += f'{score:.2f}{SEP}'
@@ -139,7 +138,27 @@ if __name__ == '__main__':
         std_scores_out += f'{score:.2f}{SEP}'
     std_scores_out = std_scores_out[:-len(SEP)]
 
-    print(mean_scores_out)
-    print(std_scores_out)
-    print(f'Mean game length: {np.mean(all_game_lengths):.2f}')
-    print(f'Finished in {int(time.time() - start_time)} seconds')
+    final_output_list = [
+        vs_message,
+        mean_scores_out,
+        std_scores_out
+    ]
+
+    if len(args.agent_paths) == 2:
+        small_vs_message = ' -vs- '.join([Path(ap).stem for ap in args.agent_paths])
+        mean_score_1 = all_results[:, :2].mean()
+        mean_score_2 = all_results[:, 2:].mean()
+        overall_mean_scores_out = f'Overall mean scores: {mean_score_1:.2f}{SEP}{mean_score_2:.2f}'
+        std_score_1 = all_results[:, :2].std()
+        std_score_2 = all_results[:, 2:].std()
+        overall_std_scores_out = f'Overall score standard deviations: {mean_score_1:.2f}{SEP}{mean_score_2:.2f}'
+        final_output_list.extend([small_vs_message, overall_mean_scores_out, overall_std_scores_out])
+
+    final_output_list.extend([
+        f'Mean game length: {np.mean(all_game_lengths):.2f}',
+        f'Finished in {int(time.time() - start_time)} seconds'
+    ])
+    final_output = '\n'.join(final_output_list)
+    print(final_output)
+    with open(save_dir / f'results.txt', 'w') as f:
+        f.write(final_output)
