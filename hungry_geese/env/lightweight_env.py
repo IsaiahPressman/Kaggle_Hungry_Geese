@@ -49,6 +49,7 @@ class LightweightEnv:
 
     def step(self, actions: Union[List[str], Sequence[int], np.ndarray]):
         assert not self.done
+        self.step_counter += 1
 
         if type(actions) == np.ndarray:
             actions = actions.ravel()
@@ -123,7 +124,6 @@ class LightweightEnv:
             needed_food = min(needed_food, len(available_positions))
             self.food.extend(sample(available_positions, needed_food))
 
-        self.step_counter += 1
         # Set rewards after deleting all geese to ensure that geese don't receive a reward on the turn they perish
         for index, goose in enumerate(self.geese):
             if len(goose) > 0:
