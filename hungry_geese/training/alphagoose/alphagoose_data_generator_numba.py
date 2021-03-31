@@ -991,7 +991,7 @@ def start_selfplay_loop(
             raise RuntimeError(f'dataset_dir already exists and contains files with id > max_saved_batches: '
                                f'{dataset_dir} - {all_files[-1].stem} > {max_saved_batches}')
         # Find the index to restart at
-        all_files.sort(key=lambda f: f.stat().st_ctime)
+        all_files.sort(key=lambda f: f.stat().st_mtime)
         start_idx = (int(all_files[-1].stem) + 1) % max_saved_batches
         print(f'Resuming data generation. Latest replay file: {all_files[-1].name}')
     else:
