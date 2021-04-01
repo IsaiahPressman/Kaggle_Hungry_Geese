@@ -7,7 +7,7 @@ from torch import nn
 from torch.utils.data import DataLoader
 from torchvision import transforms
 
-from hungry_geese import models
+from hungry_geese.nns import models, conv_blocks
 import hungry_geese.env.goose_env as ge
 from hungry_geese.training.alphagoose.alphagoose_data import AlphaGoosePretrainDataset, PretrainRandomReflect, ToTensor
 from hungry_geese.training.alphagoose.supervised_pretraining import SupervisedPretraining
@@ -20,92 +20,41 @@ if __name__ == '__main__':
     n_channels = 64
     activation = nn.ReLU
     normalize = False
+    use_mhsa = True
     model_kwargs = dict(
-        block_class=models.BasicConvolutionalBlock,
+        block_class=conv_blocks.BasicConvolutionalBlock,
         conv_block_kwargs=[
             dict(
                 in_channels=obs_type.get_obs_spec()[-3],
                 out_channels=n_channels,
                 kernel_size=3,
                 activation=activation,
-                normalize=normalize
+                normalize=normalize,
+                use_mhsa=use_mhsa
             ),
             dict(
                 in_channels=n_channels,
                 out_channels=n_channels,
                 kernel_size=3,
                 activation=activation,
-                normalize=normalize
+                normalize=normalize,
+                use_mhsa=use_mhsa
             ),
             dict(
                 in_channels=n_channels,
                 out_channels=n_channels,
                 kernel_size=3,
                 activation=activation,
-                normalize=normalize
+                normalize=normalize,
+                use_mhsa=use_mhsa
             ),
             dict(
                 in_channels=n_channels,
                 out_channels=n_channels,
                 kernel_size=3,
                 activation=activation,
-                normalize=normalize
-            ),
-            dict(
-                in_channels=n_channels,
-                out_channels=n_channels,
-                kernel_size=3,
-                activation=activation,
-                normalize=normalize
-            ),
-            dict(
-                in_channels=n_channels,
-                out_channels=n_channels,
-                kernel_size=3,
-                activation=activation,
-                normalize=normalize
-            ),
-            dict(
-                in_channels=n_channels,
-                out_channels=n_channels,
-                kernel_size=3,
-                activation=activation,
-                normalize=normalize
-            ),
-            dict(
-                in_channels=n_channels,
-                out_channels=n_channels,
-                kernel_size=3,
-                activation=activation,
-                normalize=normalize
-            ),
-            dict(
-                in_channels=n_channels,
-                out_channels=n_channels,
-                kernel_size=3,
-                activation=activation,
-                normalize=normalize
-            ),
-            dict(
-                in_channels=n_channels,
-                out_channels=n_channels,
-                kernel_size=3,
-                activation=activation,
-                normalize=normalize
-            ),
-            dict(
-                in_channels=n_channels,
-                out_channels=n_channels,
-                kernel_size=3,
-                activation=activation,
-                normalize=normalize
-            ),
-            dict(
-                in_channels=n_channels,
-                out_channels=n_channels,
-                kernel_size=3,
-                activation=activation,
-                normalize=normalize
+                normalize=normalize,
+                use_mhsa=use_mhsa
             ),
         ],
         squeeze_excitation=True,
@@ -136,7 +85,7 @@ if __name__ == '__main__':
         gamma=0.1
     )
 
-    dataset_loc = Path('/home/isaiah/data/alphagoose_pretrain_data_1000/')
+    dataset_loc = Path('/home/isaiah/GitHub/Kaggle/Hungry_Geese/episode_scraping/alphagoose_pretrain_data_1025/')
     with open(dataset_loc / 'all_saved_episodes.txt', 'r') as f:
         all_episodes = [replay_name.rstrip() for replay_name in f.readlines()]
     train_episodes, test_episodes = train_test_split(np.array(all_episodes), test_size=0.05)

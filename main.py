@@ -15,7 +15,7 @@ from hungry_geese.utils import ActionMasking, row_col, print_array_one_line
 from hungry_geese.env import goose_env as ge
 from hungry_geese.env.lightweight_env import make_from_state
 from hungry_geese.mcts.basic_mcts import Node, BasicMCTS
-from hungry_geese import models
+from hungry_geese.nns import models, conv_blocks
 
 BOARD_DIMS = np.array([N_ROWS, N_COLS])
 
@@ -77,7 +77,7 @@ class Agent:
         n_channels = 128
         activation = nn.ReLU
         model_kwargs = dict(
-            block_class=models.BasicConvolutionalBlock,
+            block_class=conv_blocks.BasicConvolutionalBlock,
             conv_block_kwargs=[
                 dict(
                     in_channels=obs_type.get_obs_spec()[-3],

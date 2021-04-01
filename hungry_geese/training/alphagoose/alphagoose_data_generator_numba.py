@@ -16,7 +16,7 @@ from tqdm import tqdm
 
 from ...config import *
 from ...env import goose_env as ge
-from ... import models
+from hungry_geese.nns import models, conv_blocks
 from .alphagoose_data_generator import reload_model_weights, save_episodes_worker
 
 
@@ -38,8 +38,8 @@ EXPLORATION = 1.0  # how much to prefer un/under-explored nodes
 
 
 # Self-play data generation parameters:
-ENVS = 64  # number of parallel self play environments
-NODES_PER_SEARCH_STEP = 8  # number of nodes each env evaluates at once
+ENVS = 128  # number of parallel self play environments
+NODES_PER_SEARCH_STEP = 4  # number of nodes each env evaluates at once
 SELFPLAY_SEARCH_ROUNDS = 25  # how many times to search each step
 BUFFER_SIZE = 262144  # this will hold ~1.3k episodes of data
 INFO_SHAPE = (N_PLAYERS, 5)
@@ -1025,7 +1025,7 @@ if __name__ == "__main__":
     n_channels = 128
     activation = nn.ReLU
     model_kwargs = dict(
-        block_class=models.BasicConvolutionalBlock,
+        block_class=conv_blocks.BasicConvolutionalBlock,
         conv_block_kwargs=[
             dict(
                 in_channels=OBS_TYPE.get_obs_spec()[-3],

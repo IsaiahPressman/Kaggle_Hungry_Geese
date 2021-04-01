@@ -6,7 +6,7 @@ from torchvision import transforms
 from hungry_geese.training.alphagoose.alphagoose_trainer import AlphaGooseTrainer
 from hungry_geese.training.alphagoose.alphagoose_data import AlphaGooseRandomReflect, ToTensor
 from hungry_geese.env import goose_env as ge
-from hungry_geese import models
+from hungry_geese.nns import models, conv_blocks
 from hungry_geese.utils import format_experiment_name
 
 if __name__ == '__main__':
@@ -16,7 +16,7 @@ if __name__ == '__main__':
     n_channels = 128
     activation = nn.ReLU
     model_kwargs = dict(
-        block_class=models.BasicConvolutionalBlock,
+        block_class=conv_blocks.BasicConvolutionalBlock,
         conv_block_kwargs=[
             dict(
                 in_channels=obs_type.get_obs_spec()[-3],
@@ -47,14 +47,15 @@ if __name__ == '__main__':
     model.to(device=DEVICE)
     optimizer = torch.optim.SGD(
         model.parameters(),
-        lr=0.05,
+        lr=0.005,
         momentum=0.9,
         weight_decay=1e-4
     )
     # NB: lr_scheduler counts steps in batches, not epochs
     lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(
         optimizer,
-        milestones=[200000 * i for i in [2, 4]],
+        #milestones=[200000 * i for i in [2, 4]],
+        milestones=[],
         gamma=0.1
     )
     dataset_kwargs = dict(
@@ -76,7 +77,7 @@ if __name__ == '__main__':
                                                              ge.RewardType.RANK_ON_DEATH,
                                                              ge.ActionMasking.LETHAL,
                                                              [n_channels],
-                                                             model_kwargs['conv_block_kwargs']) + '_v4'
+                                                             model_kwargs['conv_block_kwargs']) + '_v5'
     exp_folder = Path(f'runs/alphagoose/{experiment_name}')
     train_alg = AlphaGooseTrainer(
         model=model,

@@ -17,7 +17,7 @@ from typing import *
 import warnings
 
 from .alphagoose_data import AlphaGooseDataset
-from ...models import FullConvActorCriticNetwork
+from hungry_geese.nns.models import FullConvActorCriticNetwork
 from ...env import goose_env as ge
 
 

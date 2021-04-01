@@ -14,7 +14,7 @@ from typing import *
 
 # Custom imports
 from ..env import goose_env as ge
-from hungry_geese.models import BasicActorCriticNetwork
+from hungry_geese.nns.models import BasicActorCriticNetwork
 from .replay_buffers import BasicReplayBuffer
 
 

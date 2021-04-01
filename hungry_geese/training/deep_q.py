@@ -13,7 +13,7 @@ from typing import *
 # Custom imports
 from ..env import goose_env as ge
 from .replay_buffers import BasicReplayBuffer
-from hungry_geese.models import DeepQNetwork
+from hungry_geese.nns.models import DeepQNetwork
 
 
 class DeepQ:

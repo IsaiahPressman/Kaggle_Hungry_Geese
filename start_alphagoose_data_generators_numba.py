@@ -5,7 +5,7 @@ from torch import nn
 from hungry_geese.training.alphagoose.alphagoose_data_generator import get_latest_weights_file
 from hungry_geese.training.alphagoose.alphagoose_data_generator_numba import start_selfplay_loop
 from hungry_geese.env import goose_env as ge
-from hungry_geese import models
+from hungry_geese.nns import models, conv_blocks
 
 if __name__ == '__main__':
     device = torch.device('cuda')
@@ -14,7 +14,7 @@ if __name__ == '__main__':
     n_channels = 128
     activation = nn.ReLU
     model_kwargs = dict(
-        block_class=models.BasicConvolutionalBlock,
+        block_class=conv_blocks.BasicConvolutionalBlock,
         conv_block_kwargs=[
             dict(
                 in_channels=obs_type.get_obs_spec()[-3],
@@ -45,7 +45,7 @@ if __name__ == '__main__':
     model = models.FullConvActorCriticNetwork(**model_kwargs)
 
     weights_dir = Path(
-        'runs/alphagoose/alphagoose_combined_gradient_obs_rank_on_death_lethal_3_blocks_128_dims_v4/all_checkpoints_pt'
+        'runs/alphagoose/alphagoose_combined_gradient_obs_rank_on_death_lethal_3_blocks_128_dims_v5/all_checkpoints_pt'
     )
     print(f'Loading initial model weights from: {get_latest_weights_file(weights_dir)}')
 

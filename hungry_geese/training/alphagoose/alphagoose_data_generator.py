@@ -18,7 +18,7 @@ from ...env import goose_env as ge
 from ...env.lightweight_env import LightweightEnv, make
 from ...mcts.basic_mcts import BasicMCTS
 from ...mcts.utils import terminal_value_func, batch_actor_critic_factory
-from ...models import FullConvActorCriticNetwork
+from hungry_geese.nns.models import FullConvActorCriticNetwork
 from ...utils import ActionMasking
 
 

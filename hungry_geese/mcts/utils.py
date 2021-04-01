@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from typing import *
 
 from ..env import goose_env as ge
-from ..models import FullConvActorCriticNetwork
+from hungry_geese.nns.models import FullConvActorCriticNetwork
 
 
 def terminal_value_func(state: List[Dict]):

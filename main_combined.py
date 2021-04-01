@@ -4,7 +4,6 @@ import itertools
 from datetime import datetime
 from time import time
 
-from kaggle_environments.envs.hungry_geese.hungry_geese import Action, Configuration, Observation
 import numpy as np
 from numba import jit
 from numba.experimental import jitclass
@@ -24,7 +23,7 @@ from hungry_geese.utils import ActionMasking, row_col
 from hungry_geese.env import goose_env as ge
 from hungry_geese.env.lightweight_env import make_from_state
 from hungry_geese.mcts.basic_mcts import BasicMCTS
-from hungry_geese import models
+from hungry_geese.nns import models, conv_blocks
 
 # The evaluation episode seems to run with worse resources
 # than all following episodes, such that the JIT compilation
@@ -810,7 +809,7 @@ class Agent:
         n_channels = 64
         activation = nn.ReLU
         model_kwargs = dict(
-            block_class=models.BasicConvolutionalBlock,
+            block_class=conv_blocks.BasicConvolutionalBlock,
             conv_block_kwargs=[
                 dict(
                     in_channels=obs_type.get_obs_spec()[-3],

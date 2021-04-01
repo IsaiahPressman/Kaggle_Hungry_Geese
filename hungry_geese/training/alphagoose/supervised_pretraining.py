@@ -15,7 +15,7 @@ from tqdm import tqdm
 from typing import *
 import warnings
 
-from ...models import FullConvActorCriticNetwork
+from hungry_geese.nns.models import FullConvActorCriticNetwork
 from ...env import goose_env as ge
 
 

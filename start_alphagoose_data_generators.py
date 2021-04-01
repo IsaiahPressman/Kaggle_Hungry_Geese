@@ -4,7 +4,7 @@ from torch import nn
 
 from hungry_geese.training.alphagoose import alphagoose_data_generator as adg
 from hungry_geese.env import goose_env as ge
-from hungry_geese import models
+from hungry_geese.nns import conv_blocks
 
 if __name__ == '__main__':
     DEVICE = torch.device('cuda')
@@ -13,7 +13,7 @@ if __name__ == '__main__':
     n_channels = 128
     activation = nn.ReLU
     model_kwargs = dict(
-        block_class=models.BasicConvolutionalBlock,
+        block_class=conv_blocks.BasicConvolutionalBlock,
         conv_block_kwargs=[
             dict(
                 in_channels=obs_type.get_obs_spec()[-3],
