@@ -30,7 +30,7 @@ if __name__ == '__main__':
                 kernel_size=3,
                 activation=activation,
                 normalize=normalize,
-                use_mhsa=use_mhsa
+                use_mhsa=False
             ),
             dict(
                 in_channels=n_channels,
@@ -38,7 +38,7 @@ if __name__ == '__main__':
                 kernel_size=3,
                 activation=activation,
                 normalize=normalize,
-                use_mhsa=use_mhsa
+                use_mhsa=False
             ),
             dict(
                 in_channels=n_channels,
@@ -46,7 +46,7 @@ if __name__ == '__main__':
                 kernel_size=3,
                 activation=activation,
                 normalize=normalize,
-                use_mhsa=use_mhsa
+                use_mhsa=False
             ),
             dict(
                 in_channels=n_channels,
@@ -54,7 +54,16 @@ if __name__ == '__main__':
                 kernel_size=3,
                 activation=activation,
                 normalize=normalize,
-                use_mhsa=use_mhsa
+                use_mhsa=False
+            ),
+            dict(
+                in_channels=n_channels,
+                out_channels=n_channels*2,
+                kernel_size=3,
+                activation=activation,
+                normalize=normalize,
+                use_mhsa=use_mhsa,
+                mhsa_heads=4,
             ),
         ],
         squeeze_excitation=True,
@@ -73,7 +82,7 @@ if __name__ == '__main__':
     model.to(device=DEVICE)
     optimizer = torch.optim.SGD(
         model.parameters(),
-        lr=0.025,
+        lr=0.05,
         momentum=0.9,
         weight_decay=1e-4
     )

@@ -16,6 +16,7 @@ class BasicConvolutionalBlock(nn.Module):
             n_layers: int = 2,
             normalize: bool = False,
             use_mhsa: bool = False,
+            mhsa_heads: int = 4,
             activation: Callable = nn.ReLU,
             downsample: nn.Module = nn.Identity()):
         super(BasicConvolutionalBlock, self).__init__()
@@ -42,7 +43,7 @@ class BasicConvolutionalBlock(nn.Module):
         if use_mhsa:
             layers.append(MHSA(
                 in_channels=out_channels,
-                heads=4,
+                heads=mhsa_heads,
                 curr_h=N_ROWS,
                 curr_w=N_COLS
             ))
