@@ -68,6 +68,7 @@ if __name__ == '__main__':
         ],
         squeeze_excitation=True,
         cross_normalize_value=True,
+        use_separate_action_value_heads=True,
         # **ge.RewardType.RANK_ON_DEATH.get_recommended_value_activation_scale_shift_dict()
     )
     model = models.FullConvActorCriticNetwork(**model_kwargs)
@@ -130,7 +131,7 @@ if __name__ == '__main__':
                                                                          ge.RewardType.RANK_ON_DEATH,
                                                                          ge.ActionMasking.NONE,
                                                                          [n_channels],
-                                                                         model_kwargs['conv_block_kwargs']) + '_v0'
+                                                                         model_kwargs['conv_block_kwargs']) + '_v1'
     exp_folder = Path(f'runs/supervised_pretraining/active/{experiment_name}')
     train_alg = SupervisedPretraining(
         model=model,

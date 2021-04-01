@@ -13,8 +13,10 @@ if __name__ == '__main__':
     DEVICE = torch.device('cuda')
 
     obs_type = ge.ObsType.COMBINED_GRADIENT_OBS
-    n_channels = 128
+    n_channels = 64
     activation = nn.ReLU
+    normalize = False
+    use_mhsa = True
     model_kwargs = dict(
         block_class=conv_blocks.BasicConvolutionalBlock,
         conv_block_kwargs=[
@@ -23,25 +25,47 @@ if __name__ == '__main__':
                 out_channels=n_channels,
                 kernel_size=3,
                 activation=activation,
-                normalize=False
+                normalize=normalize,
+                use_mhsa=False
             ),
             dict(
                 in_channels=n_channels,
                 out_channels=n_channels,
                 kernel_size=3,
                 activation=activation,
-                normalize=False
+                normalize=normalize,
+                use_mhsa=False
             ),
             dict(
                 in_channels=n_channels,
                 out_channels=n_channels,
                 kernel_size=3,
                 activation=activation,
-                normalize=False
+                normalize=normalize,
+                use_mhsa=False
+            ),
+            dict(
+                in_channels=n_channels,
+                out_channels=n_channels,
+                kernel_size=3,
+                activation=activation,
+                normalize=normalize,
+                use_mhsa=False
+            ),
+            dict(
+                in_channels=n_channels,
+                out_channels=n_channels * 2,
+                kernel_size=3,
+                activation=activation,
+                normalize=normalize,
+                use_mhsa=use_mhsa,
+                mhsa_heads=4,
             ),
         ],
         squeeze_excitation=True,
         cross_normalize_value=True,
+        use_separate_action_value_heads=True,
+        # **ge.RewardType.RANK_ON_DEATH.get_recommended_value_activation_scale_shift_dict()
     )
     model = models.FullConvActorCriticNetwork(**model_kwargs)
     model.to(device=DEVICE)
@@ -77,7 +101,7 @@ if __name__ == '__main__':
                                                              ge.RewardType.RANK_ON_DEATH,
                                                              ge.ActionMasking.LETHAL,
                                                              [n_channels],
-                                                             model_kwargs['conv_block_kwargs']) + '_v5'
+                                                             model_kwargs['conv_block_kwargs']) + '_v1'
     exp_folder = Path(f'runs/alphagoose/{experiment_name}')
     train_alg = AlphaGooseTrainer(
         model=model,
