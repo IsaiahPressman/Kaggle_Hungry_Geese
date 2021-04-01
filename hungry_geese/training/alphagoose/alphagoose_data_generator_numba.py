@@ -974,7 +974,7 @@ def start_selfplay_loop(
     MODEL = model
 
     MODEL.to(device=DEVICE)
-    MODEL.load_state_dict(torch.load('/home/isaiah/GitHub/Kaggle/Hungry_Geese/cp.pt', map_location=DEVICE))
+    current_weights_path = reload_model_weights(MODEL, weights_dir, None, DEVICE)
     MODEL.eval()
 
     # Check that dataset_dir exists and is empty
@@ -1012,10 +1012,9 @@ def start_selfplay_loop(
           f'For each step, exploring {NODES_PER_SEARCH_STEP} nodes {SELFPLAY_SEARCH_ROUNDS} times, '
           f'for a total of {NODES_PER_SEARCH_STEP * SELFPLAY_SEARCH_ROUNDS} rollouts.')
 
-    current_weights_path = None
     while True:
         selfplay_loop(save_steps_batch_queue, stopwatch)
-        current_weights_path = reload_model_weights(model, weights_dir, current_weights_path, DEVICE)
+        current_weights_path = reload_model_weights(MODEL, weights_dir, current_weights_path, DEVICE)
 
 
 if __name__ == "__main__":
