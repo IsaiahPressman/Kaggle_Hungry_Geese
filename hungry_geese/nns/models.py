@@ -3,7 +3,8 @@ from torch import distributions, nn
 import torch.nn.functional as F
 from typing import *
 
-from hungry_geese.nns.conv_blocks import ResidualModel
+from .conv_blocks import ResidualModel
+from ..config import *
 
 
 class BasicActorCriticNetwork(nn.Module):
@@ -77,15 +78,21 @@ class FullConvActorCriticNetwork(nn.Module):
             self,
             cross_normalize_value: bool = True,
             value_activation: Optional[nn.Module] = None,
+            use_separate_action_value_heads: bool = False,
             value_scale: float = 1.,
             value_shift: float = 0.,
             **residual_model_kwargs
     ):
         super(FullConvActorCriticNetwork, self).__init__()
+        self.use_separate_action_value_heads = use_separate_action_value_heads
         self.base = ResidualModel(**residual_model_kwargs)
         self.base_out_channels = residual_model_kwargs['conv_block_kwargs'][-1]['out_channels']
-        self.actor = nn.Linear(self.base_out_channels, 4)
-        self.critic = nn.Linear(self.base_out_channels, 1)
+        if self.use_separate_action_value_heads:
+            self.actor = nn.Linear(self.base_out_channels, 4 * N_PLAYERS)
+            self.critic = nn.Linear(self.base_out_channels, 1 * N_PLAYERS)
+        else:
+            self.actor = nn.Linear(self.base_out_channels, 4)
+            self.critic = nn.Linear(self.base_out_channels, 1)
         # activation = residual_model_kwargs['conv_block_kwargs'][-1].get('activation', nn.ReLU)
         # fc_channels = int(self.base_out_channels / 4)
         # self.actor = nn.Sequential(
@@ -146,17 +153,23 @@ class FullConvActorCriticNetwork(nn.Module):
         # After .view(), base_out_indexed has shape (batch_size, n_geese, n_channels)
         base_out_indexed = base_out[batch_indices, head_indices].view(batch_size, n_geese, -1)
         actor_out = self.actor(base_out_indexed)
-        critic_out = self.critic(base_out_indexed).squeeze(dim=-1)
+        critic_out = self.critic(base_out_indexed)
+        if self.use_separate_action_value_heads:
+            goose_indices = torch.arange(n_geese).repeat(batch_size)
+            actor_out = actor_out.view(batch_size, n_geese, n_geese, 4)
+            critic_out = critic_out.view(batch_size, n_geese, n_geese, 1)
+            actor_out = actor_out[batch_indices, goose_indices, goose_indices].view(batch_size, n_geese, 4)
+            critic_out = critic_out[batch_indices, goose_indices, goose_indices].view(batch_size, n_geese, 1)
         logits = torch.where(
             still_alive.unsqueeze(-1),
             actor_out,
             torch.zeros_like(actor_out)
         )
         values = torch.where(
-            still_alive,
+            still_alive.unsqueeze(-1),
             critic_out,
             torch.zeros_like(critic_out)
-        )
+        ).squeeze(dim=-1)
         if self.cross_normalize_value:
             if n_geese != 4.:
                 raise RuntimeError('cross_normalize_value still needs to be implemented for n_geese != 4')
