@@ -52,7 +52,32 @@ if __name__ == '__main__':
             ),
             dict(
                 in_channels=n_channels,
-                out_channels=n_channels * 2,
+                out_channels=n_channels,
+                kernel_size=3,
+                activation=activation,
+                normalize=normalize,
+                use_mhsa=False
+            ),
+            dict(
+                in_channels=n_channels,
+                out_channels=n_channels,
+                kernel_size=3,
+                activation=activation,
+                normalize=normalize,
+                use_mhsa=False
+            ),
+            dict(
+                in_channels=n_channels,
+                out_channels=n_channels,
+                kernel_size=3,
+                activation=activation,
+                normalize=normalize,
+                use_mhsa=True,
+                mhsa_heads=4,
+            ),
+            dict(
+                in_channels=n_channels,
+                out_channels=n_channels,
                 kernel_size=3,
                 activation=activation,
                 normalize=normalize,
@@ -68,7 +93,7 @@ if __name__ == '__main__':
     model = models.FullConvActorCriticNetwork(**model_kwargs)
 
     weights_dir = Path(
-        'runs/alphagoose/alphagoose_combined_gradient_obs_rank_on_death_lethal_5_blocks_64_dims_v1/all_checkpoints_pt'
+        'runs/alphagoose/alphagoose_combined_gradient_obs_rank_on_death_lethal_5_blocks_64_dims_v0/all_checkpoints_pt'
     )
     print(f'Loading initial model weights from: {get_latest_weights_file(weights_dir)}')
 

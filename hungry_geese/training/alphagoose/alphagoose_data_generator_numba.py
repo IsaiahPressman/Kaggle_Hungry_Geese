@@ -1,18 +1,18 @@
 import itertools
-from time import time
-
-import multiprocessing as mp
-import numpy as np
 from kaggle_environments.envs.hungry_geese.hungry_geese import Action
+import multiprocessing as mp
 from numba import jit, prange, set_num_threads, threading_layer, typed
 from numba.experimental import jitclass
 from numba.types import float32, int32
+import numpy as np
 from pathlib import Path
 from scipy import stats
+from time import time
 import torch
 from torch import nn
 import torch.nn.functional as F
 from tqdm import tqdm
+import traceback
 
 from ...config import *
 from ...env import goose_env as ge
@@ -1013,7 +1013,11 @@ def start_selfplay_loop(
           f'for a total of {NODES_PER_SEARCH_STEP * SELFPLAY_SEARCH_ROUNDS} rollouts.')
 
     while True:
-        selfplay_loop(save_steps_batch_queue, stopwatch)
+        try:
+            selfplay_loop(save_steps_batch_queue, stopwatch)
+        except SystemError:
+            traceback.print_exc()
+            print('\nRestarting data collection...')
         current_weights_path = reload_model_weights(MODEL, weights_dir, current_weights_path, DEVICE)
 
 

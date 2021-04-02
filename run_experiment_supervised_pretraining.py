@@ -58,7 +58,32 @@ if __name__ == '__main__':
             ),
             dict(
                 in_channels=n_channels,
-                out_channels=n_channels*2,
+                out_channels=n_channels,
+                kernel_size=3,
+                activation=activation,
+                normalize=normalize,
+                use_mhsa=False
+            ),
+            dict(
+                in_channels=n_channels,
+                out_channels=n_channels,
+                kernel_size=3,
+                activation=activation,
+                normalize=normalize,
+                use_mhsa=False
+            ),
+            dict(
+                in_channels=n_channels,
+                out_channels=n_channels,
+                kernel_size=3,
+                activation=activation,
+                normalize=normalize,
+                use_mhsa=True,
+                mhsa_heads=4,
+            ),
+            dict(
+                in_channels=n_channels,
+                out_channels=n_channels,
                 kernel_size=3,
                 activation=activation,
                 normalize=normalize,
@@ -131,7 +156,7 @@ if __name__ == '__main__':
                                                                          ge.RewardType.RANK_ON_DEATH,
                                                                          ge.ActionMasking.NONE,
                                                                          [n_channels],
-                                                                         model_kwargs['conv_block_kwargs']) + '_v1'
+                                                                         model_kwargs['conv_block_kwargs']) + '_v0'
     exp_folder = Path(f'runs/supervised_pretraining/active/{experiment_name}')
     train_alg = SupervisedPretraining(
         model=model,
