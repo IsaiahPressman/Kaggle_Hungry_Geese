@@ -58,7 +58,7 @@ OVERAGE_BUFFER: How much overage time to leave as a buffer for the steps after E
 """
 C_PUCT = 1.
 ACTION_SELECTION_FUNC = Node.max_policy_actions
-DELTA = 0.08
+DELTA = 0.05
 MIN_THRESHOLD_FOR_CONSIDERATION = 0.15
 MAX_SEARCH_ITER = 10
 RESET_SEARCH = True
@@ -74,8 +74,10 @@ class Agent:
         self.index = obs.index
 
         obs_type = ge.ObsType.COMBINED_GRADIENT_OBS
-        n_channels = 128
+        n_channels = 64
         activation = nn.ReLU
+        normalize = False
+        use_mhsa = True
         model_kwargs = dict(
             block_class=conv_blocks.BasicConvolutionalBlock,
             conv_block_kwargs=[
@@ -84,25 +86,72 @@ class Agent:
                     out_channels=n_channels,
                     kernel_size=3,
                     activation=activation,
-                    normalize=False
+                    normalize=normalize,
+                    use_mhsa=False
                 ),
                 dict(
                     in_channels=n_channels,
                     out_channels=n_channels,
                     kernel_size=3,
                     activation=activation,
-                    normalize=False
+                    normalize=normalize,
+                    use_mhsa=False
                 ),
                 dict(
                     in_channels=n_channels,
                     out_channels=n_channels,
                     kernel_size=3,
                     activation=activation,
-                    normalize=False
+                    normalize=normalize,
+                    use_mhsa=False
+                ),
+                dict(
+                    in_channels=n_channels,
+                    out_channels=n_channels,
+                    kernel_size=3,
+                    activation=activation,
+                    normalize=normalize,
+                    use_mhsa=False
+                ),
+                dict(
+                    in_channels=n_channels,
+                    out_channels=n_channels,
+                    kernel_size=3,
+                    activation=activation,
+                    normalize=normalize,
+                    use_mhsa=False
+                ),
+                dict(
+                    in_channels=n_channels,
+                    out_channels=n_channels,
+                    kernel_size=3,
+                    activation=activation,
+                    normalize=normalize,
+                    use_mhsa=False
+                ),
+                dict(
+                    in_channels=n_channels,
+                    out_channels=n_channels,
+                    kernel_size=3,
+                    activation=activation,
+                    normalize=normalize,
+                    use_mhsa=True,
+                    mhsa_heads=4,
+                ),
+                dict(
+                    in_channels=n_channels,
+                    out_channels=n_channels,
+                    kernel_size=3,
+                    activation=activation,
+                    normalize=normalize,
+                    use_mhsa=use_mhsa,
+                    mhsa_heads=4,
                 ),
             ],
             squeeze_excitation=True,
             cross_normalize_value=True,
+            use_separate_action_value_heads=True,
+            # **ge.RewardType.RANK_ON_DEATH.get_recommended_value_activation_scale_shift_dict()
         )
         self.model = models.FullConvActorCriticNetwork(**model_kwargs)
         try:
