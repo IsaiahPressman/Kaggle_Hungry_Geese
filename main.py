@@ -15,7 +15,7 @@ from hungry_geese.utils import ActionMasking, row_col, print_array_one_line
 from hungry_geese.env import goose_env as ge
 from hungry_geese.env.lightweight_env import make_from_state
 from hungry_geese.mcts.basic_mcts import Node, BasicMCTS
-from hungry_geese.nns import models, conv_blocks
+from hungry_geese.nns import conv_blocks, models
 
 BOARD_DIMS = np.array([N_ROWS, N_COLS])
 
@@ -58,7 +58,7 @@ OVERAGE_BUFFER: How much overage time to leave as a buffer for the steps after E
 """
 C_PUCT = 1.
 ACTION_SELECTION_FUNC = Node.max_policy_actions
-DELTA = 0.05
+DELTA = 0.08
 MIN_THRESHOLD_FOR_CONSIDERATION = 0.15
 MAX_SEARCH_ITER = 10
 RESET_SEARCH = True
@@ -77,7 +77,7 @@ class Agent:
         n_channels = 64
         activation = nn.ReLU
         normalize = False
-        use_mhsa = True
+        use_mhsa = False
         model_kwargs = dict(
             block_class=conv_blocks.BasicConvolutionalBlock,
             conv_block_kwargs=[
@@ -119,31 +119,6 @@ class Agent:
                     kernel_size=3,
                     activation=activation,
                     normalize=normalize,
-                    use_mhsa=False
-                ),
-                dict(
-                    in_channels=n_channels,
-                    out_channels=n_channels,
-                    kernel_size=3,
-                    activation=activation,
-                    normalize=normalize,
-                    use_mhsa=False
-                ),
-                dict(
-                    in_channels=n_channels,
-                    out_channels=n_channels,
-                    kernel_size=3,
-                    activation=activation,
-                    normalize=normalize,
-                    use_mhsa=True,
-                    mhsa_heads=4,
-                ),
-                dict(
-                    in_channels=n_channels,
-                    out_channels=n_channels,
-                    kernel_size=3,
-                    activation=activation,
-                    normalize=normalize,
                     use_mhsa=use_mhsa,
                     mhsa_heads=4,
                 ),
@@ -159,8 +134,18 @@ class Agent:
         except FileNotFoundError:
             self.model.load_state_dict(torch.load(Path.home() / 'goose_agent/cp.pt'))
         self.model.eval()
-
         self.obs_type = obs_type
+
+        dummy_state = torch.zeros(self.obs_type.get_obs_spec()[1:])
+        dummy_head_loc = torch.arange(4).to(dtype=torch.int64)
+        still_alive = torch.ones(4).to(dtype=torch.bool)
+        self.model = torch.jit.trace(
+            self.model,
+            (dummy_state.unsqueeze(0),
+             dummy_head_loc.unsqueeze(0),
+             still_alive.unsqueeze(0))
+        )
+
         self.search_tree = BasicMCTS(
             action_mask_func=action_mask_func,
             actor_critic_func=self.batch_actor_critic_func,
@@ -207,9 +192,9 @@ class Agent:
         )
         root_node = self.search_tree.run_batch_mcts(
             env=env,
-            batch_size=2,
+            batch_size=min(BATCH_SIZE, 2),
             n_iter=10000,
-            max_time=max(0.9 - (time.time() - search_start_time), 0.)
+            max_time=max(0.93 - (time.time() - search_start_time), 0.)
         )
         initial_policy = root_node.initial_policies[self.index]
         improved_policy = root_node.get_improved_policies(temp=1.)[self.index]
@@ -226,9 +211,9 @@ class Agent:
             my_best_action_idx = ACTION_SELECTION_FUNC(root_node)[self.index]
         else:
             if obs.step < 50:
-                dynamic_max_iter = 2
+                dynamic_max_iter = 3
             elif obs.step < 100:
-                dynamic_max_iter = 4
+                dynamic_max_iter = 5
             else:
                 dynamic_max_iter = MAX_SEARCH_ITER
             n_iter = 0

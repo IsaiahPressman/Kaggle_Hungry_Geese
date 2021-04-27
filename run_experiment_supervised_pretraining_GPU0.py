@@ -14,13 +14,13 @@ from hungry_geese.training.alphagoose.supervised_pretraining import SupervisedPr
 from hungry_geese.utils import format_experiment_name
 
 if __name__ == '__main__':
-    DEVICE = torch.device('cuda')
+    DEVICE = torch.device('cuda:0')
 
     obs_type = ge.ObsType.COMBINED_GRADIENT_OBS
     n_channels = 64
     activation = nn.ReLU
     normalize = False
-    use_mhsa = True
+    use_mhsa = False
     model_kwargs = dict(
         block_class=conv_blocks.BasicConvolutionalBlock,
         conv_block_kwargs=[
@@ -62,31 +62,6 @@ if __name__ == '__main__':
                 kernel_size=3,
                 activation=activation,
                 normalize=normalize,
-                use_mhsa=False
-            ),
-            dict(
-                in_channels=n_channels,
-                out_channels=n_channels,
-                kernel_size=3,
-                activation=activation,
-                normalize=normalize,
-                use_mhsa=False
-            ),
-            dict(
-                in_channels=n_channels,
-                out_channels=n_channels,
-                kernel_size=3,
-                activation=activation,
-                normalize=normalize,
-                use_mhsa=True,
-                mhsa_heads=4,
-            ),
-            dict(
-                in_channels=n_channels,
-                out_channels=n_channels,
-                kernel_size=3,
-                activation=activation,
-                normalize=normalize,
                 use_mhsa=use_mhsa,
                 mhsa_heads=4,
             ),
@@ -113,14 +88,15 @@ if __name__ == '__main__':
         weight_decay=1e-4
     )
     # NB: lr_scheduler counts steps in batches, not epochs
+    batch_size = 2048
     lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(
         optimizer,
         # Stop reducing LR beyond 5e-4
-        milestones=[150000*i for i in [1, 3]],
+        milestones=[int(150000 * 512 * i / batch_size) for i in [1., 2.5]],
         gamma=0.1
     )
 
-    dataset_loc = Path('/home/isaiah/GitHub/Kaggle/Hungry_Geese/episode_scraping/alphagoose_pretrain_data_1025/')
+    dataset_loc = Path('/home/isaiah/data/alphagoose_pretrain_data_1050/')
     with open(dataset_loc / 'all_saved_episodes.txt', 'r') as f:
         all_episodes = [replay_name.rstrip() for replay_name in f.readlines()]
     train_episodes, test_episodes = train_test_split(np.array(all_episodes), test_size=0.05)
@@ -145,18 +121,18 @@ if __name__ == '__main__':
           f'{len(train_dataset)} samples from {len(train_episodes)} train episodes and '
           f'{len(test_dataset)} samples from {len(test_episodes)} test episodes.')
     dataloader_kwargs = dict(
-        batch_size=512,
+        batch_size=batch_size,
         shuffle=True,
         pin_memory=True
     )
-    train_dataloader = DataLoader(train_dataset, num_workers=8, **dataloader_kwargs)
-    test_dataloader = DataLoader(test_dataset, num_workers=14, **dataloader_kwargs)
+    train_dataloader = DataLoader(train_dataset, num_workers=9, **dataloader_kwargs)
+    test_dataloader = DataLoader(test_dataset, num_workers=9, **dataloader_kwargs)
 
     experiment_name = 'supervised_pretraining_' + format_experiment_name(obs_type,
                                                                          ge.RewardType.RANK_ON_DEATH,
                                                                          ge.ActionMasking.NONE,
                                                                          [n_channels],
-                                                                         model_kwargs['conv_block_kwargs']) + '_v0'
+                                                                         model_kwargs['conv_block_kwargs']) + '_v3'
     exp_folder = Path(f'runs/supervised_pretraining/active/{experiment_name}')
     train_alg = SupervisedPretraining(
         model=model,

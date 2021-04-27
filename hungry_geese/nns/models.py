@@ -148,7 +148,7 @@ class FullConvActorCriticNetwork(nn.Module):
             still_alive,
             head_locs,
             torch.zeros_like(head_locs)
-        ).view(-1)
+        ).view(-1).to(dtype=torch.int64)
         # Base_out_indexed (before .view()) is a tensor of shape (batch_size * n_geese, n_channels)
         # After .view(), base_out_indexed has shape (batch_size, n_geese, n_channels)
         base_out_indexed = base_out[batch_indices, head_indices].view(batch_size, n_geese, -1)

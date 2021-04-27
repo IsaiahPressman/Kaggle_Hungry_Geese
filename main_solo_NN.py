@@ -103,47 +103,6 @@ class Agent:
                     kernel_size=3,
                     activation=activation,
                     normalize=normalize,
-                    use_mhsa=False
-                ),
-                dict(
-                    in_channels=n_channels,
-                    out_channels=n_channels,
-                    kernel_size=3,
-                    activation=activation,
-                    normalize=normalize,
-                    use_mhsa=False
-                ),
-                dict(
-                    in_channels=n_channels,
-                    out_channels=n_channels,
-                    kernel_size=3,
-                    activation=activation,
-                    normalize=normalize,
-                    use_mhsa=False
-                ),
-                dict(
-                    in_channels=n_channels,
-                    out_channels=n_channels,
-                    kernel_size=3,
-                    activation=activation,
-                    normalize=normalize,
-                    use_mhsa=False
-                ),
-                dict(
-                    in_channels=n_channels,
-                    out_channels=n_channels,
-                    kernel_size=3,
-                    activation=activation,
-                    normalize=normalize,
-                    use_mhsa=True,
-                    mhsa_heads=4,
-                ),
-                dict(
-                    in_channels=n_channels,
-                    out_channels=n_channels,
-                    kernel_size=3,
-                    activation=activation,
-                    normalize=normalize,
                     use_mhsa=use_mhsa,
                     mhsa_heads=4,
                 ),
@@ -159,8 +118,18 @@ class Agent:
         except FileNotFoundError:
             self.model.load_state_dict(torch.load(Path.home() / 'goose_agent/cp.pt'))
         self.model.eval()
-
         self.obs_type = obs_type
+
+        dummy_state = torch.zeros(self.obs_type.get_obs_spec()[1:])
+        dummy_head_loc = torch.arange(4).to(dtype=torch.int64)
+        still_alive = torch.ones(4).to(dtype=torch.bool)
+        self.model = torch.jit.trace(
+            self.model,
+            (dummy_state.unsqueeze(0),
+             dummy_head_loc.unsqueeze(0),
+             still_alive.unsqueeze(0))
+        )
+
         self.search_tree = BasicMCTS(
             action_mask_func=action_mask_func,
             actor_critic_func=self.batch_actor_critic_func,
