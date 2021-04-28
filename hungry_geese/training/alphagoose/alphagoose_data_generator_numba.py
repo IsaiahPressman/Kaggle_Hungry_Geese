@@ -790,7 +790,7 @@ def insert_training_data_into_buffer(
 
 def get_state_dict_from_I_X_P_V(I, X, P, V):
     state_dict_list = []
-    if OBS_TYPE == ge.ObsType.COMBINED_GRADIENT_OBS:
+    if OBS_TYPE == ge.ObsType.COMBINED_GRADIENT_OBS_SMALL:
         """
         Expects a tensor of shape (3 + 2*n_players, 7, 11)
         The channels contain the following information about each cell of the board:
@@ -961,7 +961,7 @@ def start_selfplay_loop(
         dataset_dir: Path,
         weights_dir: Path,
         max_saved_batches: int,
-        obs_type: ge.ObsType = ge.ObsType.COMBINED_GRADIENT_OBS,
+        obs_type: ge.ObsType = ge.ObsType.COMBINED_GRADIENT_OBS_SMALL,
         allow_resume: bool = False
 ):
     # No-op stopwatch
@@ -1023,7 +1023,7 @@ def start_selfplay_loop(
 
 if __name__ == "__main__":
     DEVICE = torch.device('cuda')
-    OBS_TYPE = ge.ObsType.COMBINED_GRADIENT_OBS
+    OBS_TYPE = ge.ObsType.COMBINED_GRADIENT_OBS_SMALL
 
     n_channels = 128
     activation = nn.ReLU
