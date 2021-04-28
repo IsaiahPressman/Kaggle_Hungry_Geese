@@ -9,7 +9,7 @@ from hungry_geese.nns import conv_blocks
 if __name__ == '__main__':
     DEVICE = torch.device('cuda')
 
-    obs_type = ge.ObsType.COMBINED_GRADIENT_OBS
+    obs_type = ge.ObsType.COMBINED_GRADIENT_OBS_SMALL
     n_channels = 128
     activation = nn.ReLU
     model_kwargs = dict(
