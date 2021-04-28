@@ -23,7 +23,7 @@ class AlphaGooseDataset(Dataset):
                 self.samples.extend([(episode_path, step_idx) for step_idx in range(len(step_list))])
         self.obs_type = obs_type
         self.transform = transform
-        if self.obs_type != ObsType.COMBINED_GRADIENT_OBS:
+        if self.obs_type != ObsType.COMBINED_GRADIENT_OBS_SMALL:
             raise ValueError('Other obs_types have not yet been implemented, '
                              'they will need different data concatenation')
 
@@ -85,7 +85,7 @@ class AlphaGoosePretrainDataset(Dataset):
                 self.samples.extend([(episode_path, step_idx) for step_idx in range(len(step_list))])
         self.obs_type = obs_type
         self.transform = transform
-        if self.obs_type != ObsType.COMBINED_GRADIENT_OBS:
+        if self.obs_type not in (ObsType.COMBINED_GRADIENT_OBS_SMALL, ObsType.COMBINED_GRADIENT_OBS_LARGE):
             raise ValueError('Other obs_types have not yet been implemented, '
                              'they will need different data concatenation')
 
@@ -131,7 +131,7 @@ class AlphaGooseRandomReflect:
 
     def __init__(self, obs_type: ObsType):
         self.obs_type = obs_type
-        if self.obs_type != ObsType.COMBINED_GRADIENT_OBS:
+        if self.obs_type != ObsType.COMBINED_GRADIENT_OBS_SMALL:
             raise ValueError('Other obs_types have not yet been implemented.')
 
     def __call__(
@@ -139,7 +139,7 @@ class AlphaGooseRandomReflect:
             sample: Sequence[np.ndarray]
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         state, policies, available_actions_masks, ranks_rescaled, head_locs, still_alive = sample
-        if self.obs_type == ObsType.COMBINED_GRADIENT_OBS:
+        if self.obs_type == ObsType.COMBINED_GRADIENT_OBS_SMALL:
             new_head_locs = np.arange(state.shape[-2] * state.shape[-1]).reshape(*state.shape[-2:])
             # Flip vertically
             if random.random() < 0.5:
@@ -171,15 +171,13 @@ class PretrainRandomReflect:
 
     def __init__(self, obs_type: ObsType):
         self.obs_type = obs_type
-        if self.obs_type != ObsType.COMBINED_GRADIENT_OBS:
-            raise ValueError('Other obs_types have not yet been implemented.')
 
     def __call__(
             self,
             sample: Sequence[np.ndarray]
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         state, actions, ranks_rescaled, head_locs, still_alive = sample
-        if self.obs_type == ObsType.COMBINED_GRADIENT_OBS:
+        if self.obs_type in (ObsType.COMBINED_GRADIENT_OBS_SMALL, ObsType.COMBINED_GRADIENT_OBS_LARGE):
             new_head_locs = np.arange(state.shape[-2] * state.shape[-1]).reshape(*state.shape[-2:])
             # Flip vertically
             if random.random() < 0.5:

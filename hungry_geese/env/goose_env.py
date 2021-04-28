@@ -16,7 +16,8 @@ class ObsType(Enum):
     An enum of all available obs_types
     WARNING: enum order is subject to change
     """
-    COMBINED_GRADIENT_OBS = auto()
+    COMBINED_GRADIENT_OBS_SMALL = auto()
+    COMBINED_GRADIENT_OBS_LARGE = auto()
     COMBINED_OBS_SMALL = auto()
     HEAD_CENTERED_OBS_LARGE = auto()
     HEAD_CENTERED_OBS_SMALL = auto()
@@ -24,8 +25,10 @@ class ObsType(Enum):
     SET_OBS = auto()
 
     def get_obs_spec(self, n_players: int = N_PLAYERS) -> Tuple[int, ...]:
-        if self == ObsType.COMBINED_GRADIENT_OBS:
+        if self == ObsType.COMBINED_GRADIENT_OBS_SMALL:
             return -1, 3 + 2 * n_players, N_ROWS, N_COLS
+        elif self == ObsType.COMBINED_GRADIENT_OBS_LARGE:
+            return -1, 3 + 3 * n_players, N_ROWS, N_COLS
         elif self == ObsType.COMBINED_OBS_SMALL:
             return -1, 3 + 3 * n_players, N_ROWS, N_COLS
         elif self == ObsType.HEAD_CENTERED_OBS_LARGE:
@@ -352,7 +355,7 @@ class VectorizedEnv:
 
 def create_obs_tensor(observation, obs_type):
     n_players = len(observation[0]['observation']['geese'])
-    if obs_type == ObsType.COMBINED_GRADIENT_OBS:
+    if obs_type == ObsType.COMBINED_GRADIENT_OBS_SMALL:
         """
         Returns a tensor of shape (1, 3 + 2*n_players, 7, 11)
         The channels contain the following information about each cell of the board:
@@ -390,6 +393,59 @@ def create_obs_tensor(observation, obs_type):
                 head_loc = row_col(goose_loc_list[0])
                 player_channels[channel_idx_base + idx_dict['contains_head'],
                                 (*head_loc)] = 1.
+                for i, body_loc_n in enumerate(goose_loc_list[::-1]):
+                    body_loc = row_col(body_loc_n)
+                    player_channels[channel_idx_base + idx_dict['contains_body'],
+                                    (*body_loc)] = (i + 1.) / GOOSE_MAX_LEN
+        obs = np.concatenate([
+            player_channels,
+            contains_food,
+            steps_since_starvation / HUNGER_RATE,
+            current_step / MAX_NUM_STEPS
+        ], axis=0)
+    elif obs_type == ObsType.COMBINED_GRADIENT_OBS_LARGE:
+        """
+        Returns a tensor of shape (1, 3 + 3*n_players, 7, 11)
+        The channels contain the following information about each cell of the board:
+        for i in range (n_players):
+            * contains_head[i]
+            * contains_tail[i]
+            * contains_body[i], where the value of this cell represents how close to the tail this cell is
+                Values of 1 / GOOSE_MAX_LEN represent the tail, and n / GOOSE_MAX_LEN represents the nth element
+                counting from the tail, and including the head and tail
+        * contains_food
+        * steps_since_starvation (normalized to be in the range 0-1)
+        * current_step (normalized to be in the range 0-1)
+        """
+        player_channel_list = [
+            'contains_head',
+            'contains_tail',
+            'contains_body',
+        ]
+        idx_dict = {c: i for i, c in enumerate(player_channel_list)}
+        player_channels = np.zeros((len(player_channel_list) * n_players,
+                                    N_ROWS,
+                                    N_COLS),
+                                   dtype=np.float32)
+        contains_food = np.zeros((1, N_ROWS, N_COLS), dtype=np.float32)
+        steps_since_starvation = np.zeros_like(contains_food)
+        current_step = np.zeros_like(contains_food)
+        for food_loc_n in observation[0]['observation']['food']:
+            food_loc = row_col(food_loc_n)
+            contains_food[:, food_loc[0], food_loc[1]] = 1.
+        steps_since_starvation[:] = observation[0]['observation']['step'] % HUNGER_RATE
+        current_step[:] = observation[0]['observation']['step']
+        for agent_idx in range(n_players):
+            channel_idx_base = agent_idx * len(player_channel_list)
+            goose_loc_list = observation[0]['observation']['geese'][agent_idx]
+            # Make sure the goose is still alive
+            if len(goose_loc_list) > 0:
+                head_loc = row_col(goose_loc_list[0])
+                player_channels[channel_idx_base + idx_dict['contains_head'],
+                                (*head_loc)] = 1.
+                tail_loc = row_col(goose_loc_list[-1])
+                player_channels[channel_idx_base + idx_dict['contains_tail'],
+                                (*tail_loc)] = 1.
                 for i, body_loc_n in enumerate(goose_loc_list[::-1]):
                     body_loc = row_col(body_loc_n)
                     player_channels[channel_idx_base + idx_dict['contains_body'],
