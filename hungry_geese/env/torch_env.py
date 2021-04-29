@@ -24,6 +24,8 @@ class TorchEnv:
         self.n_cols = config.columns
         self.max_len = config.max_length
         self.n_food = config.min_food
+        self.hunger_rate = config.hunger_rate
+        self.episode_steps = config.episode_steps
         self.debug = debug
 
         self.n_envs = n_envs
@@ -43,25 +45,96 @@ class TorchEnv:
         self.lengths = torch.ones_like(self.head_ptrs)
         self.rewards = torch.zeros_like(self.head_ptrs)
         self.alive = torch.ones((self.n_envs, self.n_geese), dtype=torch.bool, device=self.device)
+        self.ate_last_turn = torch.zeros_like(self.alive)
         self.food_tensor = torch.zeros((self.n_envs, self.n_rows, self.n_cols), **tensor_kwargs)
         self.step_counters = torch.zeros((self.n_envs,), **tensor_kwargs)
         self.dones = torch.ones((self.n_envs,), dtype=torch.bool, device=self.device)
+        self.obs = torch.zeros((self.n_envs, *obs_type.get_obs_spec(self.n_geese)[1:]), dtype=torch.float32)
 
         self.env_idxs = torch.arange(self.n_envs, device=self.device)
         self.env_geese_idxs = self.env_idxs.repeat_interleave(self.n_geese)
         self.geese_idxs = torch.arange(self.n_geese, device=self.device).repeat(self.n_envs)
         self.env_food_idxs = self.env_idxs.repeat_interleave(self.n_food)
         self.food_idxs = torch.arange(self.n_food, device=self.device).repeat(self.n_envs)
-        self.loc_to_row_column = torch.tensor(
+        self.loc_to_row_col = torch.tensor(
             [row_col(i, self.n_cols) for i in range(self.n_rows * self.n_cols)],
             **tensor_kwargs
         ).view(self.n_rows * self.n_cols, 2)
+        self.row_col_to_loc = torch.arange(
+            self.n_rows * self.n_cols,
+            device=self.device
+        ).view(self.n_rows, self.n_cols)
         self.move_to_offset = torch.tensor(
             [list(a.to_row_col()) for a in Action],
             **tensor_kwargs
         )
         self.wrap_vals = torch.tensor([self.n_rows, self.n_cols], **tensor_kwargs)
-        self.goose_body_idxs = torch.arange(self.max_len, device=device)
+        self.goose_body_idxs = torch.arange(self.max_len, device=self.device)
+        self.obs_channel_idxs = {}
+        self.geese_channel_idxs = None
+        if self.obs_type == ObsType.COMBINED_GRADIENT_OBS_SMALL:
+            player_channel_list = [
+                'contains_head',
+                'contains_body',
+            ]
+            for i, channel in enumerate(player_channel_list):
+                self.obs_channel_idxs[channel] = torch.arange(
+                    i,
+                    self.n_geese * len(player_channel_list),
+                    len(player_channel_list),
+                    device=self.device
+                )
+            self.obs_channel_idxs.update({
+                'contains_food': torch.tensor([-3]).to(device=self.device),
+                'steps_since_starvation': torch.tensor([-2]).to(device=self.device),
+                'current_step': torch.tensor([-1]).to(device=self.device),
+            })
+            self.geese_channel_idxs = torch.arange(
+                self.n_geese * len(player_channel_list),
+                device=self.device
+            ).view(
+                1,
+                self.n_geese,
+                len(player_channel_list)
+            ).expand(
+                self.n_envs,
+                self.n_geese,
+                len(player_channel_list)
+            ).clone()
+        elif self.obs_type == ObsType.COMBINED_GRADIENT_OBS_LARGE:
+            player_channel_list = [
+                'contains_head',
+                'contains_tail',
+                'contains_body',
+            ]
+            for i, channel in enumerate(player_channel_list):
+                self.obs_channel_idxs[channel] = torch.arange(
+                    i,
+                    self.n_geese * len(player_channel_list),
+                    len(player_channel_list),
+                    device=self.device
+                )
+            self.obs_channel_idxs.update({
+                'contains_food': torch.tensor([-3]).to(device=self.device),
+                'steps_since_starvation': torch.tensor([-2]).to(device=self.device),
+                'current_step': torch.tensor([-1]).to(device=self.device),
+            })
+            self.geese_channel_idxs = torch.arange(
+                self.n_geese * len(player_channel_list),
+                device=self.device
+            ).view(
+                1,
+                self.n_geese,
+                len(player_channel_list)
+            ).expand(
+                self.n_envs,
+                self.n_geese,
+                len(player_channel_list)
+            ).clone()
+        else:
+            raise NotImplementedError(f'Unsupported obs_type: {self.obs_type}')
+
+        self.reset()
 
     def reset(self) -> torch.Tensor:
         self.geese[self.dones] = 0
@@ -74,6 +147,7 @@ class TorchEnv:
         self.alive[self.dones] = 1
         self.food_tensor[self.dones] = 0
         self.step_counters[self.dones] = 0
+        self.obs[self.dones] = 0.
 
         head_locs = torch.multinomial(
             torch.ones((self.dones.sum(), self.n_rows * self.n_cols), device=self.device),
@@ -81,7 +155,7 @@ class TorchEnv:
         )
         done_env_idxs = self.env_idxs[self.dones].repeat_interleave(self.n_geese)
         done_geese_env_idxs = self.geese_idxs.view(self.n_envs, self.n_geese)[self.dones].view(-1)
-        done_geese_idxs = self.loc_to_row_column[head_locs]
+        done_geese_idxs = self.loc_to_row_col[head_locs]
         self.geese[self.dones, :, 0] = done_geese_idxs
         self.geese_tensor[
             done_env_idxs,
@@ -96,12 +170,12 @@ class TorchEnv:
             self.n_food
         )
         done_env_idxs = self.env_idxs[self.dones].repeat_interleave(self.n_food)
-        done_food_idxs = self.loc_to_row_column[food_locs]
+        done_food_idxs = self.loc_to_row_col[food_locs]
         self.food_tensor[done_env_idxs, done_food_idxs[:, :, 0].view(-1), done_food_idxs[:, :, 1].view(-1)] = 1
 
+        self._initialize_obs(self.dones)
         self.dones[:] = False
-        # TODO: return observation
-        return torch.ones(1)
+        return self.obs
 
     @property
     def heads(self) -> torch.Tensor:
@@ -123,6 +197,32 @@ class TorchEnv:
     def all_geese_tensor(self) -> torch.Tensor:
         return self.geese_tensor.sum(dim=1)
 
+    def get_heads_tensor(self, dtype: Optional[torch.dtype] = None) -> torch.Tensor:
+        if dtype is None:
+            dtype = self.geese_tensor.dtype
+        heads_tensor = torch.zeros(self.geese_tensor.shape, dtype=dtype, device=self.device)
+        heads = self.heads[self.alive]
+        heads_tensor[
+            self.env_geese_idxs[self.alive.view(-1)],
+            self.geese_idxs[self.alive.view(-1)],
+            heads[:, 0],
+            heads[:, 1]
+        ] = 1
+        return heads_tensor
+
+    def get_tails_tensor(self, dtype: Optional[torch.dtype] = None) -> torch.Tensor:
+        if dtype is None:
+            dtype = self.geese_tensor.dtype
+        tails_tensor = torch.zeros(self.geese_tensor.shape, dtype=dtype, device=self.device)
+        tails = self.tails[self.alive]
+        tails_tensor[
+            self.env_geese_idxs[self.alive.view(-1)],
+            self.geese_idxs[self.alive.view(-1)],
+            tails[:, 0],
+            tails[:, 1]
+        ] = 1
+        return tails_tensor
+
     def _wrap(self, position_tensor: torch.Tensor) -> torch.Tensor:
         view_shape = [1] * (position_tensor.ndim - 1)
         return position_tensor % self.wrap_vals.view(*view_shape, 2)
@@ -130,6 +230,7 @@ class TorchEnv:
     def _kill_geese(self, kill_goose_mask: torch.Tensor) -> NoReturn:
         self.geese_tensor[kill_goose_mask] = 0
         self.alive[kill_goose_mask] = False
+        self.ate_last_turn[kill_goose_mask] = False
 
     def _move_geese(self, moves: torch.Tensor, update_mask: torch.Tensor) -> NoReturn:
         update_geese = self.alive & update_mask.unsqueeze(dim=-1)
@@ -161,6 +262,7 @@ class TorchEnv:
             new_heads.view(-1, 2)[:, 0],
             new_heads.view(-1, 2)[:, 1]
         ] > 0) & update_geese.view(-1)
+        self.ate_last_turn[update_geese] = goose_eat[update_geese.view(-1)]
         # Remove food where geese have eaten
         self.food_tensor[
             self.env_geese_idxs[goose_eat],
@@ -202,8 +304,9 @@ class TorchEnv:
         # Kill geese that collided with themselves
         self._kill_geese(self_collision)
 
-        # Shrink geese every 40 steps
-        shrink_goose = (self.step_counters.repeat_interleave(self.n_geese) % 40 == 0) & update_geese.view(-1)
+        # Shrink geese every self.hunger_rate steps
+        shrink_goose = ((self.step_counters.repeat_interleave(self.n_geese) % self.hunger_rate == 0) &
+                        update_geese.view(-1))
         shrink_tails = self.tails.view(-1, 2)[shrink_goose]
         self.geese_tensor[
             self.env_geese_idxs[shrink_goose],
@@ -242,19 +345,190 @@ class TorchEnv:
         new_food_needed = torch.arange(self.n_food, device=self.device).unsqueeze(dim=0).expand(update_mask.sum(), -1)
         new_food_needed = (new_food_needed < torch.minimum(n_food_needed, spots_available)).view(-1)
         new_food_env_idxs = self.env_idxs[update_mask].repeat_interleave(self.n_food)[new_food_needed]
-        new_food_idxs = self.loc_to_row_column[food_locs[new_food_needed]]
+        new_food_idxs = self.loc_to_row_col[food_locs[new_food_needed]]
         self.food_tensor[new_food_env_idxs, new_food_idxs[:, 0], new_food_idxs[:, 1]] = 1
 
     def _check_if_done(self) -> NoReturn:
-        self.dones = self.alive.sum(dim=-1) <= 1
+        self.dones = (self.alive.sum(dim=-1) <= 1) | (self.step_counters >= self.episode_steps - 1)
+
+    def _initialize_obs(self, new_envs_mask: torch.Tensor) -> NoReturn:
+        if self.obs_type == ObsType.COMBINED_GRADIENT_OBS_SMALL:
+            updated_env_geese_idxs = self.env_geese_idxs[new_envs_mask.repeat_interleave(self.n_geese)]
+            updated_obs_channel_idxs = {
+                key: val.unsqueeze(0).expand(
+                    self.n_envs,
+                    -1
+                )[new_envs_mask].view(-1) for key, val in self.obs_channel_idxs.items()
+            }
+
+            self.obs[new_envs_mask] = 0.
+            self.obs[
+                updated_env_geese_idxs,
+                updated_obs_channel_idxs['contains_head']
+            ] = self.get_heads_tensor(dtype=torch.float32)[new_envs_mask].view(-1, self.n_rows, self.n_cols)
+            updated_heads = self.heads[new_envs_mask].view(-1, 2)
+            self.obs[
+                updated_env_geese_idxs,
+                updated_obs_channel_idxs['contains_body'],
+                updated_heads[:, 0],
+                updated_heads[:, 1]
+            ] = self.lengths.to(dtype=torch.float32)[new_envs_mask].view(-1) / self.max_len
+            self.obs[
+                self.env_idxs[new_envs_mask],
+                updated_obs_channel_idxs['contains_food']
+            ] = self.food_tensor[new_envs_mask].to(dtype=torch.float32)
+        elif self.obs_type == ObsType.COMBINED_GRADIENT_OBS_LARGE:
+            updated_env_geese_idxs = self.env_geese_idxs[new_envs_mask.repeat_interleave(self.n_geese)]
+            updated_obs_channel_idxs = {
+                key: val.unsqueeze(0).expand(
+                    self.n_envs,
+                    -1
+                )[new_envs_mask].view(-1) for key, val in self.obs_channel_idxs.items()
+            }
+
+            self.obs[new_envs_mask] = 0.
+            self.obs[
+                updated_env_geese_idxs,
+                updated_obs_channel_idxs['contains_head']
+            ] = self.get_heads_tensor(dtype=torch.float32)[new_envs_mask].view(-1, self.n_rows, self.n_cols)
+            self.obs[
+                updated_env_geese_idxs,
+                updated_obs_channel_idxs['contains_tail']
+            ] = self.get_tails_tensor(dtype=torch.float32)[new_envs_mask].view(-1, self.n_rows, self.n_cols)
+            updated_heads = self.heads[new_envs_mask].view(-1, 2)
+            self.obs[
+                updated_env_geese_idxs,
+                updated_obs_channel_idxs['contains_body'],
+                updated_heads[:, 0],
+                updated_heads[:, 1]
+            ] = self.lengths.to(dtype=torch.float32)[new_envs_mask].view(-1) / self.max_len
+            self.obs[
+                self.env_idxs[new_envs_mask],
+                updated_obs_channel_idxs['contains_food']
+            ] = self.food_tensor[new_envs_mask].to(dtype=torch.float32)
+        else:
+            raise NotImplementedError(f'Unsupported obs_type: {self.obs_type}')
 
     def _update_obs(self, update_mask: torch.Tensor) -> NoReturn:
         if self.obs_type == ObsType.COMBINED_GRADIENT_OBS_SMALL:
-            pass
+            updated_env_geese_idxs = self.env_geese_idxs[update_mask.repeat_interleave(self.n_geese)]
+            updated_obs_channel_idxs = {
+                key: val.unsqueeze(0).expand(
+                    self.n_envs,
+                    -1
+                )[update_mask].view(-1) for key, val in self.obs_channel_idxs.items()
+            }
+            n_goose_channels = self.geese_channel_idxs.shape[-1]
+
+            self.obs[
+                updated_env_geese_idxs,
+                updated_obs_channel_idxs['contains_head']
+            ] = self.get_heads_tensor(dtype=torch.float32)[update_mask].view(-1, self.n_rows, self.n_cols)
+            body_decrement = torch.where(
+                self.step_counters % self.hunger_rate == 0,
+                2. / self.max_len,
+                1. / self.max_len
+            )[update_mask].unsqueeze(-1).expand(-1, self.n_geese)
+            body_decrement = torch.where(
+                self.ate_last_turn[update_mask],
+                body_decrement - 1. / self.max_len,
+                body_decrement
+            ).view(-1, 1, 1)
+            self.obs[
+                updated_env_geese_idxs,
+                updated_obs_channel_idxs['contains_body']
+            ] -= body_decrement
+            updated_heads = self.heads[update_mask].view(-1, 2)
+            self.obs[
+                updated_env_geese_idxs,
+                updated_obs_channel_idxs['contains_body'],
+                updated_heads[:, 0],
+                updated_heads[:, 1]
+            ] = self.lengths.to(dtype=torch.float32)[update_mask].view(-1) / self.max_len
+            self.obs[
+                updated_env_geese_idxs,
+                updated_obs_channel_idxs['contains_body']
+            ] *= self.geese_tensor[update_mask].view(-1, self.n_rows, self.n_cols).to(dtype=torch.float32)
+            self.obs.clamp_(min=0.)
+            self.obs[
+                self.env_geese_idxs[(update_mask.unsqueeze(-1) & ~self.alive).view(-1)].repeat_interleave(
+                    n_goose_channels),
+                self.geese_channel_idxs[update_mask.unsqueeze(-1) & ~self.alive].view(-1)
+            ] = 0.
+            self.obs[
+                self.env_idxs[update_mask],
+                updated_obs_channel_idxs['contains_food']
+            ] = self.food_tensor[update_mask].to(dtype=torch.float32)
+            self.obs[
+                self.env_idxs[update_mask],
+                updated_obs_channel_idxs['steps_since_starvation']
+            ] = (self.step_counters[update_mask].view(-1, 1, 1).to(torch.float32) % self.hunger_rate) / self.hunger_rate
+            self.obs[
+                self.env_idxs[update_mask],
+                updated_obs_channel_idxs['current_step']
+            ] = self.step_counters[update_mask].view(-1, 1, 1).to(torch.float32) / self.episode_steps
         elif self.obs_type == ObsType.COMBINED_GRADIENT_OBS_LARGE:
-            pass
+            updated_env_geese_idxs = self.env_geese_idxs[update_mask.repeat_interleave(self.n_geese)]
+            updated_obs_channel_idxs = {
+                key: val.unsqueeze(0).expand(
+                    self.n_envs,
+                    -1
+                )[update_mask].view(-1) for key, val in self.obs_channel_idxs.items()
+            }
+            n_goose_channels = self.geese_channel_idxs.shape[-1]
+
+            self.obs[
+                updated_env_geese_idxs,
+                updated_obs_channel_idxs['contains_head']
+            ] = self.get_heads_tensor(dtype=torch.float32)[update_mask].view(-1, self.n_rows, self.n_cols)
+            self.obs[
+                updated_env_geese_idxs,
+                updated_obs_channel_idxs['contains_tail']
+            ] = self.get_tails_tensor(dtype=torch.float32)[update_mask].view(-1, self.n_rows, self.n_cols)
+            body_decrement = torch.where(
+                self.step_counters % self.hunger_rate == 0,
+                2. / self.max_len,
+                1. / self.max_len
+            )[update_mask].unsqueeze(-1).expand(-1, self.n_geese)
+            body_decrement = torch.where(
+                self.ate_last_turn[update_mask],
+                body_decrement - 1. / self.max_len,
+                body_decrement
+            ).view(-1, 1, 1)
+            self.obs[
+                updated_env_geese_idxs,
+                updated_obs_channel_idxs['contains_body']
+            ] -= body_decrement
+            updated_heads = self.heads[update_mask].view(-1, 2)
+            self.obs[
+                updated_env_geese_idxs,
+                updated_obs_channel_idxs['contains_body'],
+                updated_heads[:, 0],
+                updated_heads[:, 1]
+            ] = self.lengths.to(dtype=torch.float32)[update_mask].view(-1) / self.max_len
+            self.obs[
+                updated_env_geese_idxs,
+                updated_obs_channel_idxs['contains_body']
+            ] *= self.geese_tensor[update_mask].view(-1, self.n_rows, self.n_cols).to(dtype=torch.float32)
+            self.obs.clamp_(min=0.)
+            self.obs[
+                self.env_geese_idxs[(update_mask.unsqueeze(-1) & ~self.alive).view(-1)].repeat_interleave(n_goose_channels),
+                self.geese_channel_idxs[update_mask.unsqueeze(-1) & ~self.alive].view(-1)
+            ] = 0.
+            self.obs[
+                self.env_idxs[update_mask],
+                updated_obs_channel_idxs['contains_food']
+            ] = self.food_tensor[update_mask].to(dtype=torch.float32)
+            self.obs[
+                self.env_idxs[update_mask],
+                updated_obs_channel_idxs['steps_since_starvation']
+            ] = (self.step_counters[update_mask].view(-1, 1, 1).to(torch.float32) % self.hunger_rate) / self.hunger_rate
+            self.obs[
+                self.env_idxs[update_mask],
+                updated_obs_channel_idxs['current_step']
+            ] = self.step_counters[update_mask].view(-1, 1, 1).to(torch.float32) / self.episode_steps
         else:
-            raise ValueError(f'Unsupported obs_type: {self.obs_type}')
+            raise NotImplementedError(f'Unsupported obs_type: {self.obs_type}')
 
     def _update_rewards(self, update_mask: torch.Tensor) -> NoReturn:
         update_geese = self.alive & update_mask.unsqueeze(dim=-1)
@@ -276,15 +550,14 @@ class TorchEnv:
         if actions.dtype != torch.int64:
             raise TypeError(f'actions.dtype was {actions.dtype}, but should be {torch.int64}')
 
-        self.step_counters += 1
+        self.step_counters[update_mask] += 1
         self._move_geese(actions, update_mask)
         self._replenish_food(update_mask)
         self._check_if_done()
         self._update_obs(update_mask)
         self._update_rewards(update_mask)
 
-        # TODO: return observation
-        return torch.ones(1)
+        return self.obs
 
     def generate_obs_dicts(self) -> List[List[Dict]]:
         raise NotImplementedError()
@@ -335,6 +608,8 @@ class TorchEnv:
         target.food_tensor[:] = self.food_tensor[:]
         target.step_counters[:] = self.step_counters[:]
         target.dones[:] = self.dones[:]
+
+        raise NotImplementedError('Make sure to copy obs + other new data tensors')
 
     def copy_data_from(self, source: 'TorchEnv') -> NoReturn:
         source.copy_data_to(self)
