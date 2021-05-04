@@ -219,7 +219,7 @@ class TorchMCTS:
         self.c_puct = c_puct
         self.add_noise = add_noise
         self.noise_dist = torch.distributions.dirichlet.Dirichlet(
-            torch.tensor([noise_val] * n_geese, dtype=torch.float32, device=device)
+            torch.tensor([noise_val] * 4, dtype=torch.float32, device=device)
         )
         self.noise_weight = noise_weight
         self.tree = TorchMCTSTree(n_geese=n_geese, device=device, **tree_kwargs)
@@ -248,7 +248,7 @@ class TorchMCTS:
         )
         # Store the policy priors
         if add_policy_noise:
-            noise = self.noise_dist.sample((env_copy.n_envs,))
+            noise = self.noise_dist.sample((env_copy.n_envs, env_copy.n_geese))
             policy_ests = (1. - self.noise_weight) * policy_ests + self.noise_weight * noise
         self.tree.set_policy_priors(policy_ests)
         # Set the visited non-terminal leaves to be expanded next time

@@ -5,6 +5,8 @@ import torch
 from ..config import N_PLAYERS
 from .goose_env import ObsType
 
+ACTIONS_TUPLE = tuple(Action)
+
 
 class TorchEnv:
     """
@@ -39,7 +41,7 @@ class TorchEnv:
         self.geese_tensor = torch.zeros((self.n_envs, self.n_geese, self.n_rows, self.n_cols), **tensor_kwargs)
         self.head_ptrs = torch.zeros((self.n_envs, self.n_geese), **tensor_kwargs)
         self.tail_ptrs = torch.zeros_like(self.head_ptrs)
-        self.last_move = -torch.ones_like(self.head_ptrs)
+        self.last_actions = torch.zeros_like(self.head_ptrs)
         self.lengths = torch.ones_like(self.head_ptrs)
         self.rewards = torch.zeros_like(self.head_ptrs)
         self.alive = torch.ones((self.n_envs, self.n_geese), dtype=torch.bool, device=self.device)
@@ -140,7 +142,7 @@ class TorchEnv:
         self.geese_tensor[self.dones] = 0
         self.head_ptrs[self.dones] = 0
         self.tail_ptrs[self.dones] = 0
-        self.last_move[self.dones] = 1
+        self.last_actions[self.dones] = 0
         self.lengths[self.dones] = 1
         self.rewards[self.dones] = 0
         self.alive[self.dones] = 1
@@ -175,6 +177,10 @@ class TorchEnv:
         self._initialize_obs(self.dones)
         self.dones[:] = False
         return self.obs
+
+    def force_reset(self) -> NoReturn:
+        self.dones[:] = True
+        self.reset()
 
     @property
     def heads(self) -> torch.Tensor:
@@ -244,6 +250,11 @@ class TorchEnv:
         # Get new head positions
         offsets = self.move_to_offset[actions]
         new_heads = self._wrap(self.heads + offsets)
+        # Check for illegal actions
+        illegal_actions = ((self.last_actions - actions).abs() == 2) & update_geese
+        self._kill_geese(illegal_actions)
+        update_geese = self.alive & update_mask.unsqueeze(dim=-1)
+
         # Update self.head_ptrs
         self.head_ptrs[update_geese] = (self.head_ptrs[update_geese] + 1) % self.max_len
         # Update self.geese
@@ -294,10 +305,10 @@ class TorchEnv:
         # Update self.lengths
         self.lengths[grow_goose.view(self.n_envs, self.n_geese)] += 1
         # Update last move
-        self.last_move = torch.where(
+        self.last_actions = torch.where(
             update_geese,
             actions,
-            torch.zeros_like(self.last_move)
+            torch.zeros_like(self.last_actions)
         )
 
         # Check if any geese collide with themselves
@@ -310,6 +321,7 @@ class TorchEnv:
         self_collision = self_collision.view(self.n_envs, self.n_geese) & update_geese
         # Kill geese that collided with themselves
         self._kill_geese(self_collision)
+        update_geese = self.alive & update_mask.unsqueeze(dim=-1)
 
         # Shrink geese every self.hunger_rate steps
         shrink_goose = ((self.step_counters.repeat_interleave(self.n_geese) % self.hunger_rate == 0) &
@@ -328,6 +340,7 @@ class TorchEnv:
         ).view(self.n_envs, self.n_geese)
         self.lengths[shrink_goose.view(self.n_envs, self.n_geese)] -= 1
         self._kill_geese((self.lengths == 0) & update_geese)
+        update_geese = self.alive & update_mask.unsqueeze(dim=-1)
 
         # Check for collisions between geese
         collision = self.all_geese_tensor[
@@ -570,7 +583,21 @@ class TorchEnv:
             return self.obs
 
     def generate_obs_dicts(self) -> List[List[Dict]]:
-        raise NotImplementedError()
+        return generate_obs_dicts(
+            n_envs=self.n_envs,
+            n_geese=self.n_geese,
+            max_len=self.max_len,
+            dones=self.dones,
+            alive=self.alive,
+            last_actions=self.last_actions,
+            rewards=self.rewards,
+            step_counters=self.step_counters,
+            geese_tensor=self.geese_tensor,
+            tail_ptrs=self.tail_ptrs,
+            head_ptrs=self.head_ptrs,
+            row_col_to_loc=self.row_col_to_loc,
+            food_tensor=self.food_tensor
+        )
 
     def render_env(self, env_idx: int, include_info: bool = True) -> str:
         out_mat = torch.zeros((self.n_rows, self.n_cols), device=self.device, dtype=torch.int64)
@@ -611,7 +638,7 @@ class TorchEnv:
         target.geese_tensor[:] = self.geese_tensor[:]
         target.head_ptrs[:] = self.head_ptrs[:]
         target.tail_ptrs[:] = self.tail_ptrs[:]
-        target.last_move[:] = self.last_move[:]
+        target.last_actions[:] = self.last_actions[:]
         target.lengths[:] = self.lengths[:]
         target.rewards[:] = self.rewards[:]
         target.alive[:] = self.alive[:]
@@ -623,3 +650,82 @@ class TorchEnv:
 
     def copy_data_from(self, source: 'TorchEnv') -> NoReturn:
         source.copy_data_to(self)
+
+
+def _get_geese_list(
+        env_idx: int,
+        n_geese: int,
+        max_len: int,
+        alive: torch.Tensor,
+        geese_tensor: torch.Tensor,
+        tail_ptrs: torch.Tensor,
+        head_ptrs: torch.Tensor,
+        row_col_to_loc: torch.Tensor
+) -> List[List[int]]:
+    geese = []
+    for goose_idx in range(n_geese):
+        goose_list = []
+        if alive[env_idx, goose_idx]:
+            goose_vec = geese_tensor[env_idx, goose_idx]
+            i = tail_ptrs[env_idx, goose_idx]
+            while i <= head_ptrs[env_idx, goose_idx]:
+                goose_list.append(row_col_to_loc[goose_vec[i, 0], goose_vec[i, 1]].cpu().item())
+                i = (i + 1) % max_len
+        geese.append(goose_list)
+    return geese
+
+
+def _get_food_list(env_idx: int, food_tensor: torch.Tensor) -> List[int]:
+    return [i.item() for i in torch.nonzero(food_tensor[env_idx].view(-1))]
+
+
+def generate_obs_dicts(
+        n_envs: int,
+        n_geese: int,
+        max_len: int,
+        dones: torch.Tensor,
+        alive: torch.Tensor,
+        last_actions: torch.Tensor,
+        rewards: torch.Tensor,
+        step_counters: torch.Tensor,
+        geese_tensor: torch.Tensor,
+        tail_ptrs: torch.Tensor,
+        head_ptrs: torch.Tensor,
+        row_col_to_loc: torch.Tensor,
+        food_tensor: torch.Tensor
+) -> List[List[Dict]]:
+    all_dicts = []
+    for env_idx in range(n_envs):
+        state_dict_list = []
+        if dones[env_idx]:
+            statuses = ['DONE' for _ in range(n_geese)]
+        else:
+            statuses = ['ACTIVE' if a else 'DONE' for a in alive[env_idx]]
+        for goose_idx in range(n_geese):
+            dict_g = {
+                'action': ACTIONS_TUPLE[last_actions[env_idx, goose_idx]].name,
+                'reward': rewards[env_idx, goose_idx].cpu().item(),
+                'info': {},
+                'observation': {
+                    'index': goose_idx
+                },
+                'status': statuses[goose_idx]
+            }
+            if goose_idx == 0:
+                dict_g['observation'].update({
+                    'step': step_counters[env_idx].cpu().item(),
+                    'geese': _get_geese_list(
+                        env_idx=env_idx,
+                        n_geese=n_geese,
+                        max_len=max_len,
+                        alive=alive,
+                        geese_tensor=geese_tensor,
+                        tail_ptrs=tail_ptrs,
+                        head_ptrs=head_ptrs,
+                        row_col_to_loc=row_col_to_loc
+                    ),
+                    'food': _get_food_list(env_idx, food_tensor)
+                })
+            state_dict_list.append(dict_g)
+        all_dicts.append(state_dict_list)
+    return all_dicts
