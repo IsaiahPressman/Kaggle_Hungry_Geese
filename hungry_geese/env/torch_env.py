@@ -16,8 +16,7 @@ class TorchEnv:
             n_envs: int,
             obs_type: ObsType,
             n_geese: int = N_PLAYERS,
-            device: torch.device = torch.device('cuda'),
-            debug: bool = False
+            device: torch.device = torch.device('cuda')
     ):
         self.config = config
         self.n_rows = config.rows
@@ -26,7 +25,6 @@ class TorchEnv:
         self.n_food = config.min_food
         self.hunger_rate = config.hunger_rate
         self.episode_steps = config.episode_steps
-        self.debug = debug
 
         self.n_envs = n_envs
         self.obs_type = obs_type
@@ -49,7 +47,8 @@ class TorchEnv:
         self.food_tensor = torch.zeros((self.n_envs, self.n_rows, self.n_cols), **tensor_kwargs)
         self.step_counters = torch.zeros((self.n_envs,), **tensor_kwargs)
         self.dones = torch.ones((self.n_envs,), dtype=torch.bool, device=self.device)
-        self.obs = torch.zeros((self.n_envs, *obs_type.get_obs_spec(self.n_geese)[1:]), dtype=torch.float32)
+        self.obs = torch.zeros((self.n_envs, *obs_type.get_obs_spec(self.n_geese)[1:]),
+                               dtype=torch.float32, device=self.device)
 
         self.env_idxs = torch.arange(self.n_envs, device=self.device)
         self.env_geese_idxs = self.env_idxs.repeat_interleave(self.n_geese)
@@ -186,6 +185,14 @@ class TorchEnv:
         ].view(self.n_envs, self.n_geese, 2)
 
     @property
+    def head_locs(self) -> torch.Tensor:
+        heads = self.heads.view(-1, 2)
+        return self.row_col_to_loc[
+            heads[:, 0],
+            heads[:, 1]
+        ].view(self.n_envs, self.n_geese)
+
+    @property
     def tails(self) -> torch.Tensor:
         return self.geese[
             self.env_geese_idxs,
@@ -232,10 +239,10 @@ class TorchEnv:
         self.alive[kill_goose_mask] = False
         self.ate_last_turn[kill_goose_mask] = False
 
-    def _move_geese(self, moves: torch.Tensor, update_mask: torch.Tensor) -> NoReturn:
+    def _move_geese(self, actions: torch.Tensor, update_mask: torch.Tensor) -> NoReturn:
         update_geese = self.alive & update_mask.unsqueeze(dim=-1)
         # Get new head positions
-        offsets = self.move_to_offset[moves]
+        offsets = self.move_to_offset[actions]
         new_heads = self._wrap(self.heads + offsets)
         # Update self.head_ptrs
         self.head_ptrs[update_geese] = (self.head_ptrs[update_geese] + 1) % self.max_len
@@ -289,7 +296,7 @@ class TorchEnv:
         # Update last move
         self.last_move = torch.where(
             update_geese,
-            moves,
+            actions,
             torch.zeros_like(self.last_move)
         )
 
@@ -512,7 +519,9 @@ class TorchEnv:
             ] *= self.geese_tensor[update_mask].view(-1, self.n_rows, self.n_cols).to(dtype=torch.float32)
             self.obs.clamp_(min=0.)
             self.obs[
-                self.env_geese_idxs[(update_mask.unsqueeze(-1) & ~self.alive).view(-1)].repeat_interleave(n_goose_channels),
+                self.env_geese_idxs[
+                    (update_mask.unsqueeze(-1) & ~self.alive).view(-1)
+                ].repeat_interleave(n_goose_channels),
                 self.geese_channel_idxs[update_mask.unsqueeze(-1) & ~self.alive].view(-1)
             ] = 0.
             self.obs[
@@ -539,30 +548,31 @@ class TorchEnv:
         )
 
     def step(self, actions: torch.Tensor, update_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
-        if update_mask is None:
-            update_mask = torch.ones_like(self.dones, dtype=torch.bool)
-        if update_mask.shape != self.dones.shape:
-            raise RuntimeError(f'update_mask should be of shape {self.dones.shape}, was {update_mask.shape}')
-        if (self.dones & update_mask).any():
-            raise RuntimeError(f'{self.dones.sum()} environments are finished - call env.reset() before continuing')
-        if actions.shape != (self.n_envs, self.n_geese):
-            raise ValueError(f'actions.shape was {actions.shape}, but should be {(self.n_envs, self.n_geese)}')
-        if actions.dtype != torch.int64:
-            raise TypeError(f'actions.dtype was {actions.dtype}, but should be {torch.int64}')
+        with torch.autograd.profiler.record_function('env_step'):
+            if update_mask is None:
+                update_mask = torch.ones_like(self.dones, dtype=torch.bool)
+            if update_mask.shape != self.dones.shape:
+                raise RuntimeError(f'update_mask should be of shape {self.dones.shape}, was {update_mask.shape}')
+            if (self.dones & update_mask).any():
+                raise RuntimeError(f'{self.dones.sum()} environments are finished - call env.reset() before continuing')
+            if actions.shape != (self.n_envs, self.n_geese):
+                raise ValueError(f'actions.shape was {actions.shape}, but should be {(self.n_envs, self.n_geese)}')
+            if actions.dtype != torch.int64:
+                raise TypeError(f'actions.dtype was {actions.dtype}, but should be {torch.int64}')
 
-        self.step_counters[update_mask] += 1
-        self._move_geese(actions, update_mask)
-        self._replenish_food(update_mask)
-        self._check_if_done()
-        self._update_obs(update_mask)
-        self._update_rewards(update_mask)
+            self.step_counters[update_mask] += 1
+            self._move_geese(actions, update_mask)
+            self._replenish_food(update_mask)
+            self._check_if_done()
+            self._update_obs(update_mask)
+            self._update_rewards(update_mask)
 
-        return self.obs
+            return self.obs
 
     def generate_obs_dicts(self) -> List[List[Dict]]:
         raise NotImplementedError()
 
-    def render_env(self, env_idx: int, include_info: bool = False) -> str:
+    def render_env(self, env_idx: int, include_info: bool = True) -> str:
         out_mat = torch.zeros((self.n_rows, self.n_cols), device=self.device, dtype=torch.int64)
         for i in range(self.n_geese):
             out_mat = torch.where(
@@ -605,109 +615,11 @@ class TorchEnv:
         target.lengths[:] = self.lengths[:]
         target.rewards[:] = self.rewards[:]
         target.alive[:] = self.alive[:]
+        target.ate_last_turn[:] = self.ate_last_turn[:]
         target.food_tensor[:] = self.food_tensor[:]
         target.step_counters[:] = self.step_counters[:]
         target.dones[:] = self.dones[:]
-
-        raise NotImplementedError('Make sure to copy obs + other new data tensors')
+        target.obs[:] = self.obs[:]
 
     def copy_data_from(self, source: 'TorchEnv') -> NoReturn:
         source.copy_data_to(self)
-
-
-# DEPRECATED:
-"""
-@torch.jit.script
-def _did_goose_self_collide(
-        goose_locs: torch.Tensor,
-        head_ptr: int,
-        tail_ptr: int,
-        goose_body_idxs: torch.Tensor
-) -> torch.Tensor:
-    if head_ptr >= tail_ptr:
-        goose_body_mask = torch.logical_and(
-            goose_body_idxs < head_ptr,
-            goose_body_idxs >= tail_ptr
-        )
-    else:
-        goose_body_mask = torch.logical_or(
-            goose_body_idxs < head_ptr,
-            goose_body_idxs >= tail_ptr
-        )
-    head = goose_locs[head_ptr]
-    return torch.any(head == goose_locs[goose_body_mask])
-
-
-@torch.jit.script
-def _check_for_self_collision(
-        geese_locs: torch.Tensor,
-        head_ptrs: torch.Tensor,
-        tail_ptrs: torch.Tensor,
-        goose_body_idxs: torch.Tensor
-) -> torch.Tensor:
-    n_envs = geese_locs.shape[0]
-    n_geese = geese_locs.shape[1]
-    # TODO remove:
-    return torch.zeros((n_envs, n_geese), dtype=torch.bool)
-    max_len = geese_locs.shape[2]
-    futures = [torch.jit.fork(
-        _did_goose_self_collide,
-        geese_locs.view(n_envs * n_geese, max_len)[i],
-        head_ptrs.view(-1)[i].item(),
-        tail_ptrs.view(-1)[i].item(),
-        goose_body_idxs
-    ) for i in range(n_envs * n_geese)]
-    results = [torch.jit.wait(fut) for fut in futures]
-    return torch.stack(results).view(n_envs, n_geese)
-
-
-@torch.jit.script
-def _kill_goose(
-        geese_tensor: torch.Tensor,
-        goose: torch.Tensor,
-        env_idx: int,
-        goose_idx: int,
-        head_ptr: int,
-        tail_ptr: int,
-        goose_body_idxs: torch.Tensor
-):
-    if head_ptr >= tail_ptr:
-        goose_body_mask = torch.logical_and(
-            goose_body_idxs <= head_ptr,
-            goose_body_idxs >= tail_ptr
-        )
-    else:
-        goose_body_mask = torch.logical_or(
-            goose_body_idxs <= head_ptr,
-            goose_body_idxs >= tail_ptr
-        )
-    geese_tensor[env_idx, goose_idx, goose[goose_body_mask, 0], goose[goose_body_mask, 1]] = 0
-
-
-@torch.jit.script
-def _kill_geese(
-        geese_tensor: torch.Tensor,
-        geese: torch.Tensor,
-        geese_env_idxs: torch.Tensor,
-        geese_idxs: torch.Tensor,
-        head_ptrs: torch.Tensor,
-        tail_ptrs: torch.Tensor,
-        goose_body_idxs: torch.Tensor
-):
-    # Modifies geese_array in-place by removing all squares that the dead goose is on
-    # Other aspects of goose death, such as modifying TorchEnv.alive are not done here
-    n_dead_geese = geese.shape[0]
-    if n_dead_geese == 0:
-        return
-    futures = [torch.jit.fork(
-        _kill_goose,
-        geese_tensor,
-        geese[i],
-        geese_env_idxs.view(-1)[i].item(),
-        geese_idxs.view(-1)[i].item(),
-        head_ptrs.view(-1)[i].item(),
-        tail_ptrs.view(-1)[i].item(),
-        goose_body_idxs
-    ) for i in range(n_dead_geese)]
-    results = [torch.jit.wait(fut) for fut in futures]
-"""
