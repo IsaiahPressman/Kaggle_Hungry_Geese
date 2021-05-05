@@ -297,7 +297,7 @@ class TorchEnv:
         ] -= (1 - goose_eat.to(torch.int64))[update_geese.view(-1)]
         # Update self.tail_ptrs
         grow_goose = goose_eat & (self.lengths.view(-1) < self.max_len)
-        self.tail_ptrs = torch.where(
+        self.tail_ptrs[:] = torch.where(
             grow_goose,
             self.tail_ptrs.view(-1),
             (self.tail_ptrs.view(-1) + 1) % self.max_len
@@ -305,7 +305,7 @@ class TorchEnv:
         # Update self.lengths
         self.lengths[grow_goose.view(self.n_envs, self.n_geese)] += 1
         # Update last move
-        self.last_actions = torch.where(
+        self.last_actions[:] = torch.where(
             update_geese,
             actions,
             torch.zeros_like(self.last_actions)
@@ -333,7 +333,7 @@ class TorchEnv:
             shrink_tails[:, 0],
             shrink_tails[:, 1]
         ] -= 1
-        self.tail_ptrs = torch.where(
+        self.tail_ptrs[:] = torch.where(
             shrink_goose,
             (self.tail_ptrs.view(-1) + 1) % self.max_len,
             self.tail_ptrs.view(-1)
@@ -369,7 +369,7 @@ class TorchEnv:
         self.food_tensor[new_food_env_idxs, new_food_idxs[:, 0], new_food_idxs[:, 1]] = 1
 
     def _check_if_done(self) -> NoReturn:
-        self.dones = (self.alive.sum(dim=-1) <= 1) | (self.step_counters >= self.episode_steps - 1)
+        self.dones[:] = (self.alive.sum(dim=-1) <= 1) | (self.step_counters >= self.episode_steps - 1)
 
     def _initialize_obs(self, new_envs_mask: torch.Tensor) -> NoReturn:
         if self.obs_type == ObsType.COMBINED_GRADIENT_OBS_SMALL:
@@ -554,7 +554,7 @@ class TorchEnv:
 
     def _update_rewards(self, update_mask: torch.Tensor) -> NoReturn:
         update_geese = self.alive & update_mask.unsqueeze(dim=-1)
-        self.rewards = torch.where(
+        self.rewards[:] = torch.where(
             update_geese,
             self.step_counters.unsqueeze(dim=-1) * (self.max_len + 1) + self.lengths,
             self.rewards
