@@ -50,6 +50,7 @@ def main_env_worker(
                 save_episode_queue.put_nowait(finished_episodes[env_idx])
                 finished_episodes[env_idx] = []
             print(f'Finished generating obs_dict in {time.time() - obs_dict_start_time:.2f} seconds')
+            torch.cuda.synchronize(shared_env.device)
             search_finished.wait()
 
             policy_updated.wait()
@@ -74,6 +75,7 @@ def main_env_worker(
                         for goose_idx, goose in enumerate(step):
                             goose['final_rank'] = all_agent_rankings[env_idx, goose_idx].item() - 1.
                 shared_env.reset()
+            torch.cuda.synchronize(shared_env.device)
             step_taken.wait()
     finally:
         # Delete references to shared CUDA tensors before exiting
@@ -119,16 +121,19 @@ def mcts_worker(
             mcts.reset()
             mcts.run_mcts(shared_env, local_env)
             print(f'Finished MCTS in {time.time() - step_start_time:.2f} seconds')
+            torch.cuda.synchronize(shared_env.device)
             search_finished.wait()
 
             # Update policies
             shared_policies[:] = mcts.tree.get_improved_policies()
+            torch.cuda.synchronize(shared_env.device)
             policy_updated.wait()
 
             # Update model every update_model_freq iterations
             step_counter = (step_counter + 1) % update_model_freq
             if step_counter == 0:
                 current_weights_path = reload_model_weights(model, weights_dir, current_weights_path, device)
+            torch.cuda.synchronize(shared_env.device)
             step_taken.wait()
             print(f'Finished step {step_counter} in {time.time() - step_start_time:.2f} seconds')
     finally:
