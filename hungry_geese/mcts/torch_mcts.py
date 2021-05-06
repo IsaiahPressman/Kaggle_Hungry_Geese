@@ -129,11 +129,15 @@ class TorchMCTSTree:
         ]
         uct_vals = values_masked + (c_puct *
                                     init_pi_masked *
-                                    action_masks_masked *
                                     torch.sqrt(visits_masked.sum(
                                         dim=-1,
                                         keepdim=True
                                     )) / (1. + visits_masked))
+        uct_vals = torch.where(
+            action_masks_masked.to(torch.bool),
+            uct_vals,
+            torch.zeros_like(uct_vals) - 1e6
+        )
         """
         We could just go from here using a simple torch.argmax(uct_vals, dim=-1) to select actions,
         but this would always tiebreak towards actions with lower indices.
@@ -153,9 +157,11 @@ class TorchMCTSTree:
     def set_action_masks(self, action_masks: torch.Tensor) -> NoReturn:
         self.action_masks[self.env_idxs, self.ptrs] = action_masks
 
-    def set_policy_priors(self, policies: torch.Tensor) -> NoReturn:
-        policies_masked = policies * self.action_masks[self.env_idxs, self.ptrs]
-        self.init_pi[self.env_idxs, self.ptrs] = policies_masked / policies_masked.sum(dim=-1, keepdim=True)
+    def set_policy_priors(self, policies: torch.Tensor, update_mask: torch.Tensor) -> NoReturn:
+        env_idxs_masked = self.env_idxs[update_mask]
+        ptrs_masked = self.ptrs[update_mask]
+        policies_masked = policies[update_mask] * self.action_masks[env_idxs_masked, ptrs_masked]
+        self.init_pi[env_idxs_masked, ptrs_masked] = policies_masked / policies_masked.sum(dim=-1, keepdim=True)
 
     def update_values(self, values: torch.Tensor, envs_mask: torch.Tensor) -> NoReturn:
         env_idxs_masked = self.env_idxs[envs_mask]
@@ -247,11 +253,14 @@ class TorchMCTS:
             env_copy: TorchEnv,
             add_policy_noise: bool
     ) -> NoReturn:
+        if env_copy.dones.any():
+            raise RuntimeError(f'{env_copy.dones.sum()} environments are finished - call env.reset() before continuing')
         # Loop until every env is at a leaf state
-        while not self.tree.is_at_leaf.all():
+        while (~self.tree.is_at_leaf & ~env_copy.dones).all():
             actions = self.tree.get_puct_actions(env_copy.alive, self.c_puct)
-            env_copy.step(actions, ~self.tree.is_at_leaf)
-            self.tree.go_to_or_make_children(actions, ~self.tree.is_at_leaf)
+            take_step_mask = ~self.tree.is_at_leaf & ~env_copy.dones
+            env_copy.step(actions, take_step_mask)
+            self.tree.go_to_or_make_children(actions, take_step_mask)
         # Evaluate the leaf states
         policy_ests, values = self.actor_critic_func(
             env_copy.obs,
@@ -270,7 +279,7 @@ class TorchMCTS:
         if add_policy_noise:
             noise = self.noise_dist.sample((env_copy.n_envs, env_copy.n_geese))
             policy_ests = (1. - self.noise_weight) * policy_ests + self.noise_weight * noise
-        self.tree.set_policy_priors(policy_ests)
+        self.tree.set_policy_priors(policy_ests, ~env_copy.dones)
         # Set the visited non-terminal leaves to be expanded next time
         self.tree.set_leaf_status(env_copy.dones)
         # Backpropagate the values

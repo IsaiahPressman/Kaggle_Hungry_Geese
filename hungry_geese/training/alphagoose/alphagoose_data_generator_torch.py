@@ -1,9 +1,7 @@
 from pathlib import Path
 import time
-from threading import BrokenBarrierError
 import torch
 import torch.multiprocessing as mp
-import traceback
 from typing import *
 
 from ...env.torch_env import TorchEnv
@@ -44,7 +42,7 @@ def main_env_worker(
                     if step[g].get('status') == 'ACTIVE':
                         step[g].update({
                             'available_actions_mask': [1] * 4,
-                            'policy': [all_policies[env_idx, g].tolist()]
+                            'policy': all_policies[env_idx, g].tolist()
                         })
                 all_episodes[env_idx].append(all_obs_dicts[env_idx])
             for env_idx in torch.arange(shared_env.n_envs)[dones_before_reset]:
@@ -64,7 +62,7 @@ def main_env_worker(
                 actions,
                 torch.zeros_like(actions)
             ))
-            dones_before_reset = shared_env.dones.cpu()
+            dones_before_reset = shared_env.dones.cpu().clone()
             if dones_before_reset.any():
                 all_agent_rankings = rankdata_average(shared_env.rewards).cpu()
                 for env_idx in torch.arange(shared_env.n_envs)[dones_before_reset]:
@@ -72,7 +70,7 @@ def main_env_worker(
                     all_episodes[env_idx] = []
                     for step_idx, step in enumerate(finished_episodes[env_idx]):
                         for goose_idx, goose in enumerate(step):
-                            goose['final_rank'] = all_agent_rankings[env_idx, goose_idx] - 1.
+                            goose['final_rank'] = all_agent_rankings[env_idx, goose_idx].item() - 1.
                 shared_env.reset()
             step_taken.wait()
     finally:

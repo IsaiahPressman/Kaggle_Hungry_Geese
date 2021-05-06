@@ -571,26 +571,25 @@ class TorchEnv:
         )
 
     def step(self, actions: torch.Tensor, update_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
-        with torch.autograd.profiler.record_function('env_step'):
-            if update_mask is None:
-                update_mask = torch.ones_like(self.dones, dtype=torch.bool)
-            if update_mask.shape != self.dones.shape:
-                raise RuntimeError(f'update_mask should be of shape {self.dones.shape}, was {update_mask.shape}')
-            if (self.dones & update_mask).any():
-                raise RuntimeError(f'{self.dones.sum()} environments are finished - call env.reset() before continuing')
-            if actions.shape != (self.n_envs, self.n_geese):
-                raise ValueError(f'actions.shape was {actions.shape}, but should be {(self.n_envs, self.n_geese)}')
-            if actions.dtype != torch.int64:
-                raise TypeError(f'actions.dtype was {actions.dtype}, but should be {torch.int64}')
+        if update_mask is None:
+            update_mask = torch.ones_like(self.dones, dtype=torch.bool)
+        if update_mask.shape != self.dones.shape:
+            raise RuntimeError(f'update_mask should be of shape {self.dones.shape}, was {update_mask.shape}')
+        if (self.dones & update_mask).any():
+            raise RuntimeError(f'{self.dones.sum()} environments are finished - call env.reset() before continuing')
+        if actions.shape != (self.n_envs, self.n_geese):
+            raise ValueError(f'actions.shape was {actions.shape}, but should be {(self.n_envs, self.n_geese)}')
+        if actions.dtype != torch.int64:
+            raise TypeError(f'actions.dtype was {actions.dtype}, but should be {torch.int64}')
 
-            self.step_counters[update_mask] += 1
-            self._move_geese(actions, update_mask)
-            self._replenish_food(update_mask)
-            self._check_if_done()
-            self._update_obs(update_mask)
-            self._update_rewards(update_mask)
+        self.step_counters[update_mask] += 1
+        self._move_geese(actions, update_mask)
+        self._replenish_food(update_mask)
+        self._check_if_done()
+        self._update_obs(update_mask)
+        self._update_rewards(update_mask)
 
-            return self.obs
+        return self.obs
 
     def generate_obs_dicts(self, selected_envs_mask: Optional[torch.Tensor] = None) -> List[List[Dict]]:
         return generate_obs_dicts(
@@ -677,11 +676,13 @@ def _get_geese_list(
     for goose_idx in range(n_geese):
         goose_list = []
         if alive[env_idx, goose_idx]:
-            goose_vec = geese_positions[env_idx, goose_idx]
+            goose_vec = geese_positions[env_idx, goose_idx].cpu()
             i = tail_ptrs[env_idx, goose_idx]
-            while i <= head_ptrs[env_idx, goose_idx]:
-                goose_list.append(row_col_to_loc[goose_vec[i, 0], goose_vec[i, 1]].cpu().item())
-                i = (i + 1) % max_len
+            while i < head_ptrs[env_idx, goose_idx]:
+                goose_list.append(row_col_to_loc[goose_vec[i, 0], goose_vec[i, 1]].item())
+                i = (i + 1) % (max_len + 1)
+            head_i = head_ptrs[env_idx, goose_idx]
+            goose_list.append(row_col_to_loc[goose_vec[head_i, 0], goose_vec[head_i, 1]].item())
         geese.append(goose_list[::-1])
     return geese
 

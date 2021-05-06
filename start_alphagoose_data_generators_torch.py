@@ -87,7 +87,7 @@ def main():
 
     env_kwargs = dict(
         config=Configuration(kaggle_make('hungry_geese', debug=False).configuration),
-        n_envs=5000,
+        n_envs=2500,
         obs_type=obs_type,
         device=device,
     )

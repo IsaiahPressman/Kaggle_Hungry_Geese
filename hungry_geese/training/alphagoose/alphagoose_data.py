@@ -139,7 +139,7 @@ class AlphaGooseRandomReflect:
             sample: Sequence[np.ndarray]
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         state, policies, available_actions_masks, ranks_rescaled, head_locs, still_alive = sample
-        if self.obs_type == ObsType.COMBINED_GRADIENT_OBS_SMALL:
+        if self.obs_type in (ObsType.COMBINED_GRADIENT_OBS_SMALL, ObsType.COMBINED_GRADIENT_OBS_LARGE):
             new_head_locs = np.arange(state.shape[-2] * state.shape[-1]).reshape(*state.shape[-2:])
             # Flip vertically
             if random.random() < 0.5:

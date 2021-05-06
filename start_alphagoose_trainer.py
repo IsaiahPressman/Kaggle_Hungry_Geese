@@ -93,7 +93,7 @@ if __name__ == '__main__':
     dataloader_kwargs = dict(
         batch_size=2048,
         shuffle=True,
-        num_workers=4,
+        num_workers=8,
         pin_memory=True
     )
 
@@ -109,10 +109,10 @@ if __name__ == '__main__':
         lr_scheduler=lr_scheduler,
         dataset_kwargs=dataset_kwargs,
         dataloader_kwargs=dataloader_kwargs,
+        # min_saved_steps=10,
         device=DEVICE,
         use_mixed_precision=True,
         exp_folder=exp_folder,
-        # min_saved_steps=1000,
         checkpoint_freq=1,
         checkpoint_render_n_games=0,
     )
