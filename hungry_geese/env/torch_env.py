@@ -595,17 +595,16 @@ class TorchEnv:
         return generate_obs_dicts(
             n_envs=self.n_envs,
             n_geese=self.n_geese,
-            max_len=self.max_len,
-            dones=self.dones,
-            alive=self.alive,
-            last_actions=self.last_actions,
-            rewards=self.rewards,
-            step_counters=self.step_counters,
-            geese_positions=self.geese,
-            tail_ptrs=self.tail_ptrs,
-            head_ptrs=self.head_ptrs,
-            row_col_to_loc=self.row_col_to_loc,
-            food_tensor=self.food_tensor,
+            dones=self.dones.cpu(),
+            alive=self.alive.cpu(),
+            last_actions=self.last_actions.cpu(),
+            rewards=self.rewards.cpu(),
+            step_counters=self.step_counters.cpu(),
+            geese_positions=self.geese.cpu(),
+            tail_ptrs=self.tail_ptrs.cpu(),
+            head_ptrs=self.head_ptrs.cpu(),
+            row_col_to_loc=self.row_col_to_loc.cpu(),
+            food_tensor=self.food_tensor.cpu(),
             selected_envs_mask=selected_envs_mask
         )
 
@@ -665,7 +664,6 @@ class TorchEnv:
 def _get_geese_list(
         env_idx: int,
         n_geese: int,
-        max_len: int,
         alive: torch.Tensor,
         geese_positions: torch.Tensor,
         tail_ptrs: torch.Tensor,
@@ -674,16 +672,16 @@ def _get_geese_list(
 ) -> List[List[int]]:
     geese = []
     for goose_idx in range(n_geese):
-        goose_list = []
         if alive[env_idx, goose_idx]:
-            goose_vec = geese_positions[env_idx, goose_idx].cpu()
-            i = tail_ptrs[env_idx, goose_idx]
-            while i < head_ptrs[env_idx, goose_idx]:
-                goose_list.append(row_col_to_loc[goose_vec[i, 0], goose_vec[i, 1]].item())
-                i = (i + 1) % (max_len + 1)
-            head_i = head_ptrs[env_idx, goose_idx]
-            goose_list.append(row_col_to_loc[goose_vec[head_i, 0], goose_vec[head_i, 1]].item())
-        geese.append(goose_list[::-1])
+            goose_vec_full = geese_positions[env_idx, goose_idx].roll(
+                shifts=-tail_ptrs[env_idx, goose_idx].item(),
+                dims=0
+            )
+            goose_vec_sliced = goose_vec_full[:(head_ptrs[env_idx, goose_idx] - tail_ptrs[env_idx, goose_idx] + 1)]
+            goose_loc_list = row_col_to_loc[goose_vec_sliced[:, 0], goose_vec_sliced[:, 1]].tolist()
+        else:
+            goose_loc_list = []
+        geese.append(goose_loc_list[::-1])
     return geese
 
 
@@ -694,7 +692,6 @@ def _get_food_list(env_idx: int, food_tensor: torch.Tensor) -> List[int]:
 def generate_obs_dicts(
         n_envs: int,
         n_geese: int,
-        max_len: int,
         dones: torch.Tensor,
         alive: torch.Tensor,
         last_actions: torch.Tensor,
@@ -710,6 +707,8 @@ def generate_obs_dicts(
     all_dicts = []
     if selected_envs_mask is None:
         selected_envs_mask = torch.ones(dones.shape, dtype=torch.bool)
+    else:
+        selected_envs_mask = selected_envs_mask.cpu()
     for env_idx in torch.arange(n_envs)[selected_envs_mask]:
         state_dict_list = []
         if selected_envs_mask[env_idx]:
@@ -733,7 +732,6 @@ def generate_obs_dicts(
                         'geese': _get_geese_list(
                             env_idx=env_idx,
                             n_geese=n_geese,
-                            max_len=max_len,
                             alive=alive,
                             geese_positions=geese_positions,
                             tail_ptrs=tail_ptrs,

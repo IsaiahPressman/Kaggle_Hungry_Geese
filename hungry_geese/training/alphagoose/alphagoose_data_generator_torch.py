@@ -24,6 +24,7 @@ def main_env_worker(
         finished_episodes = [[] for _ in range(shared_env.n_envs)]
         dones_before_reset = shared_env.dones.cpu()
         while True:
+            obs_dict_start_time = time.time()
             all_obs_dicts = shared_env.generate_obs_dicts()
             all_policies = shared_policies.cpu()
             for env_idx in range(shared_env.n_envs):
@@ -48,6 +49,7 @@ def main_env_worker(
             for env_idx in torch.arange(shared_env.n_envs)[dones_before_reset]:
                 save_episode_queue.put_nowait(finished_episodes[env_idx])
                 finished_episodes[env_idx] = []
+            print(f'Finished generating obs_dict in {time.time() - obs_dict_start_time:.2f} seconds')
             search_finished.wait()
 
             policy_updated.wait()
@@ -116,6 +118,7 @@ def mcts_worker(
             # Perform search
             mcts.reset()
             mcts.run_mcts(shared_env, local_env)
+            print(f'Finished MCTS in {time.time() - step_start_time:.2f} seconds')
             search_finished.wait()
 
             # Update policies
