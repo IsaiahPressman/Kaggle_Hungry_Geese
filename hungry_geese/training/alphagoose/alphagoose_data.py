@@ -23,9 +23,9 @@ class AlphaGooseDataset(Dataset):
                 self.samples.extend([(episode_path, step_idx) for step_idx in range(len(step_list))])
         self.obs_type = obs_type
         self.transform = transform
-        if self.obs_type != ObsType.COMBINED_GRADIENT_OBS_SMALL:
+        if self.obs_type not in (ObsType.COMBINED_GRADIENT_OBS_SMALL, ObsType.COMBINED_GRADIENT_OBS_LARGE):
             raise ValueError('Other obs_types have not yet been implemented, '
-                             'they will need different data concatenation')
+                             'they may need different data concatenation')
 
     def __getitem__(self, index: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         episode_path, step_idx = self.samples[index]
@@ -131,7 +131,7 @@ class AlphaGooseRandomReflect:
 
     def __init__(self, obs_type: ObsType):
         self.obs_type = obs_type
-        if self.obs_type != ObsType.COMBINED_GRADIENT_OBS_SMALL:
+        if self.obs_type not in (ObsType.COMBINED_GRADIENT_OBS_SMALL, ObsType.COMBINED_GRADIENT_OBS_LARGE):
             raise ValueError('Other obs_types have not yet been implemented.')
 
     def __call__(

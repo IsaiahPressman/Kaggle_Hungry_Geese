@@ -210,6 +210,16 @@ class TorchEnv:
     def all_geese_tensor(self) -> torch.Tensor:
         return self.geese_tensor.sum(dim=1)
 
+    def get_illegal_action_masks(self, dtype: torch.dtype = torch.bool):
+        action_masks = torch.ones((self.n_envs, self.n_geese, 4), dtype=dtype, device=self.device)
+        action_masks.scatter_(
+            -1,
+            self.last_actions.unsqueeze(-1),
+            torch.zeros((self.n_envs, self.n_geese, 1), dtype=dtype, device=self.device)
+        )
+        action_masks[self.step_counters == 0] = True
+        return action_masks[:, :, [2, 3, 0, 1]]
+
     def get_heads_tensor(self, dtype: Optional[torch.dtype] = None) -> torch.Tensor:
         if dtype is None:
             dtype = self.geese_tensor.dtype
@@ -582,7 +592,7 @@ class TorchEnv:
 
             return self.obs
 
-    def generate_obs_dicts(self) -> List[List[Dict]]:
+    def generate_obs_dicts(self, selected_envs_mask: Optional[torch.Tensor] = None) -> List[List[Dict]]:
         return generate_obs_dicts(
             n_envs=self.n_envs,
             n_geese=self.n_geese,
@@ -592,11 +602,12 @@ class TorchEnv:
             last_actions=self.last_actions,
             rewards=self.rewards,
             step_counters=self.step_counters,
-            geese_tensor=self.geese_tensor,
+            geese_positions=self.geese,
             tail_ptrs=self.tail_ptrs,
             head_ptrs=self.head_ptrs,
             row_col_to_loc=self.row_col_to_loc,
-            food_tensor=self.food_tensor
+            food_tensor=self.food_tensor,
+            selected_envs_mask=selected_envs_mask
         )
 
     def render_env(self, env_idx: int, include_info: bool = True) -> str:
@@ -657,7 +668,7 @@ def _get_geese_list(
         n_geese: int,
         max_len: int,
         alive: torch.Tensor,
-        geese_tensor: torch.Tensor,
+        geese_positions: torch.Tensor,
         tail_ptrs: torch.Tensor,
         head_ptrs: torch.Tensor,
         row_col_to_loc: torch.Tensor
@@ -666,12 +677,12 @@ def _get_geese_list(
     for goose_idx in range(n_geese):
         goose_list = []
         if alive[env_idx, goose_idx]:
-            goose_vec = geese_tensor[env_idx, goose_idx]
+            goose_vec = geese_positions[env_idx, goose_idx]
             i = tail_ptrs[env_idx, goose_idx]
             while i <= head_ptrs[env_idx, goose_idx]:
                 goose_list.append(row_col_to_loc[goose_vec[i, 0], goose_vec[i, 1]].cpu().item())
                 i = (i + 1) % max_len
-        geese.append(goose_list)
+        geese.append(goose_list[::-1])
     return geese
 
 
@@ -688,44 +699,48 @@ def generate_obs_dicts(
         last_actions: torch.Tensor,
         rewards: torch.Tensor,
         step_counters: torch.Tensor,
-        geese_tensor: torch.Tensor,
+        geese_positions: torch.Tensor,
         tail_ptrs: torch.Tensor,
         head_ptrs: torch.Tensor,
         row_col_to_loc: torch.Tensor,
-        food_tensor: torch.Tensor
+        food_tensor: torch.Tensor,
+        selected_envs_mask: Optional[torch.Tensor] = None
 ) -> List[List[Dict]]:
     all_dicts = []
-    for env_idx in range(n_envs):
+    if selected_envs_mask is None:
+        selected_envs_mask = torch.ones(dones.shape, dtype=torch.bool)
+    for env_idx in torch.arange(n_envs)[selected_envs_mask]:
         state_dict_list = []
-        if dones[env_idx]:
-            statuses = ['DONE' for _ in range(n_geese)]
-        else:
-            statuses = ['ACTIVE' if a else 'DONE' for a in alive[env_idx]]
-        for goose_idx in range(n_geese):
-            dict_g = {
-                'action': ACTIONS_TUPLE[last_actions[env_idx, goose_idx]].name,
-                'reward': rewards[env_idx, goose_idx].cpu().item(),
-                'info': {},
-                'observation': {
-                    'index': goose_idx
-                },
-                'status': statuses[goose_idx]
-            }
-            if goose_idx == 0:
-                dict_g['observation'].update({
-                    'step': step_counters[env_idx].cpu().item(),
-                    'geese': _get_geese_list(
-                        env_idx=env_idx,
-                        n_geese=n_geese,
-                        max_len=max_len,
-                        alive=alive,
-                        geese_tensor=geese_tensor,
-                        tail_ptrs=tail_ptrs,
-                        head_ptrs=head_ptrs,
-                        row_col_to_loc=row_col_to_loc
-                    ),
-                    'food': _get_food_list(env_idx, food_tensor)
-                })
-            state_dict_list.append(dict_g)
+        if selected_envs_mask[env_idx]:
+            if dones[env_idx]:
+                statuses = ['DONE' for _ in range(n_geese)]
+            else:
+                statuses = ['ACTIVE' if a else 'DONE' for a in alive[env_idx]]
+            for goose_idx in range(n_geese):
+                dict_g = {
+                    'action': ACTIONS_TUPLE[last_actions[env_idx, goose_idx]].name,
+                    'reward': rewards[env_idx, goose_idx].cpu().item(),
+                    'info': {},
+                    'observation': {
+                        'index': goose_idx
+                    },
+                    'status': statuses[goose_idx]
+                }
+                if goose_idx == 0:
+                    dict_g['observation'].update({
+                        'step': step_counters[env_idx].cpu().item(),
+                        'geese': _get_geese_list(
+                            env_idx=env_idx,
+                            n_geese=n_geese,
+                            max_len=max_len,
+                            alive=alive,
+                            geese_positions=geese_positions,
+                            tail_ptrs=tail_ptrs,
+                            head_ptrs=head_ptrs,
+                            row_col_to_loc=row_col_to_loc
+                        ),
+                        'food': _get_food_list(env_idx, food_tensor)
+                    })
+                state_dict_list.append(dict_g)
         all_dicts.append(state_dict_list)
     return all_dicts

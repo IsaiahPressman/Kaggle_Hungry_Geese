@@ -12,11 +12,13 @@ class TorchMCTSTree:
             n_envs: int,
             max_size: int,
             n_geese: int = N_PLAYERS,
+            policy_temp: float = 1.,
             device: torch.device = torch.device('cuda')
     ):
         self.n_envs = n_envs
         self.max_size = max_size
         self.n_geese = n_geese
+        self.policy_temp = policy_temp
         self.device = device
 
         int_tensor_kwargs = dict(
@@ -31,10 +33,12 @@ class TorchMCTSTree:
         self.children = torch.empty((self.n_envs, self.max_size, 4 ** self.n_geese), **int_tensor_kwargs)
         self.depths = torch.empty((self.n_envs, self.max_size), **int_tensor_kwargs)
         self.actions = torch.empty((self.n_envs, self.max_size, self.n_geese), **int_tensor_kwargs)
+        self.action_masks = torch.empty((self.n_envs, self.max_size, self.n_geese, 4), **float_tensor_kwargs)
         self.is_leaf = torch.empty((self.n_envs, self.max_size), dtype=torch.bool, device=self.device)
         self.visits = torch.empty((self.n_envs, self.max_size, self.n_geese, 4), **float_tensor_kwargs)
         self.q_vals = torch.empty((self.n_envs, self.max_size, self.n_geese, 4), **float_tensor_kwargs)
         self.init_pi = torch.empty((self.n_envs, self.max_size, self.n_geese, 4), **float_tensor_kwargs)
+
         self.ptrs = torch.empty((self.n_envs,), **int_tensor_kwargs)
         self.sizes = torch.empty((self.n_envs,), **int_tensor_kwargs)
 
@@ -48,6 +52,7 @@ class TorchMCTSTree:
         self.depths[:] = 0
         self.is_leaf[:] = True
         self.actions[:] = -1
+        self.action_masks[:] = True
         self.visits[:] = 0.0
         self.q_vals[:] = 0.0
         self.init_pi[:] = 0.0
@@ -118,18 +123,23 @@ class TorchMCTSTree:
             self.env_idxs,
             self.ptrs
         ]
+        action_masks_masked = self.action_masks[
+            self.env_idxs,
+            self.ptrs
+        ]
         uct_vals = values_masked + (c_puct *
                                     init_pi_masked *
+                                    action_masks_masked *
                                     torch.sqrt(visits_masked.sum(
                                         dim=-1,
-                                        keepdims=True
+                                        keepdim=True
                                     )) / (1. + visits_masked))
         """
         We could just go from here using a simple torch.argmax(uct_vals, dim=-1) to select actions,
         but this would always tiebreak towards actions with lower indices.
         Therefore, we sample from all actions whose uct value equals the max uct value for that agent.
         """
-        uct_max = uct_vals.max(dim=-1, keepdims=True).values
+        uct_max = uct_vals.max(dim=-1, keepdim=True).values
         actions = torch.multinomial(
             (uct_vals == uct_max).view(-1, 4).to(torch.float32),
             1
@@ -140,8 +150,12 @@ class TorchMCTSTree:
             torch.zeros_like(actions)
         )
 
+    def set_action_masks(self, action_masks: torch.Tensor) -> NoReturn:
+        self.action_masks[self.env_idxs, self.ptrs] = action_masks
+
     def set_policy_priors(self, policies: torch.Tensor) -> NoReturn:
-        self.init_pi[self.env_idxs, self.ptrs] = policies
+        policies_masked = policies * self.action_masks[self.env_idxs, self.ptrs]
+        self.init_pi[self.env_idxs, self.ptrs] = policies_masked / policies_masked.sum(dim=-1, keepdim=True)
 
     def update_values(self, values: torch.Tensor, envs_mask: torch.Tensor) -> NoReturn:
         env_idxs_masked = self.env_idxs[envs_mask]
@@ -190,14 +204,16 @@ class TorchMCTSTree:
     def is_at_root(self) -> torch.Tensor:
         return self.ptrs == 0
 
-    def get_improved_policies(self, temp: float = 1.) -> torch.Tensor:
-        assert temp >= 0.
+    def get_improved_policies(self, policy_temp: Optional[float] = None) -> torch.Tensor:
+        if policy_temp is None:
+            policy_temp = self.policy_temp
+        assert policy_temp >= 0.
         visits_indexed = self.visits[self.env_idxs, self.ptrs]
-        if temp == 0.:
+        if policy_temp == 0.:
             max_visits = visits_indexed.max(dim=-1, keepdim=True)
             probs = (visits_indexed == max_visits).to(torch.float32)
         else:
-            probs = torch.pow(visits_indexed, 1. / temp)
+            probs = torch.pow(visits_indexed, 1. / policy_temp)
         return probs / probs.sum(dim=-1, keepdim=True)
 
 
@@ -206,6 +222,7 @@ class TorchMCTS:
             self,
             actor_critic_func: Callable,
             terminal_value_func: Callable,
+            n_iter: int,
             c_puct: float = 1.,
             add_noise: bool = False,
             noise_val: float = 2.,
@@ -216,6 +233,7 @@ class TorchMCTS:
     ):
         self.actor_critic_func = actor_critic_func
         self.terminal_value_func = terminal_value_func
+        self.n_iter = n_iter
         self.c_puct = c_puct
         self.add_noise = add_noise
         self.noise_dist = torch.distributions.dirichlet.Dirichlet(
@@ -246,6 +264,8 @@ class TorchMCTS:
             self.terminal_value_func(env_copy.rewards),
             values
         )
+        # Store the illegal actions
+        self.tree.set_action_masks(env_copy.get_illegal_action_masks(dtype=torch.float32))
         # Store the policy priors
         if add_policy_noise:
             noise = self.noise_dist.sample((env_copy.n_envs, env_copy.n_geese))
@@ -264,10 +284,12 @@ class TorchMCTS:
             self,
             env: TorchEnv,
             env_placeholder: TorchEnv,
-            n_iter: int,
+            n_iter: Optional[int] = None,
             show_progress: bool = False
     ) -> NoReturn:
         assert env.n_envs == self.tree.n_envs
+        if n_iter is None:
+            n_iter = self.n_iter
         # The +1 is for the initial expansion of the root node
         if show_progress:
             iterator = tqdm.trange(n_iter + 1)
