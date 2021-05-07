@@ -101,6 +101,11 @@ def read_json_lines(file_path: Union[str, Path], line_idx: int):
         return json.loads(f.readlines()[line_idx])
 
 
+def read_ljson(file_path: Union[str, Path]) -> List:
+    with open(file_path, 'rb') as f:
+        return [json.loads(line) for line in f.readlines()]
+
+
 def format_experiment_name(obs_type,
                            reward_type,
                            action_masking,

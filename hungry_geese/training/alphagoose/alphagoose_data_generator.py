@@ -161,6 +161,11 @@ def get_latest_weights_file(weights_dir: Path) -> Path:
     return all_weight_files[-1]
 
 
+def save_episode(episode_path: Path, episode: List[Dict]) -> NoReturn:
+    with open(episode_path, 'w') as f:
+        f.writelines([json.dumps(step) + '\n' for step in episode])
+
+
 def save_episodes_worker(
         dataset_dir: Path,
         save_episode_queue: mp.Queue,
@@ -176,15 +181,16 @@ def save_episodes_worker(
                 save_start_time = time.time()
                 # Empty queue items that arrived while waiting for the lock
                 n_items = save_episode_queue.qsize()
-                plural = 'es' if n_items + len(episode_batch) != 1 else ''
+                plural = 's' if n_items + len(episode_batch) != 1 else ''
                 print(f'Fetching {n_items + len(episode_batch)} episode{plural} from the queue.')
                 for i in range(n_items):
-                    episode_batch.append(save_episode_queue.get())
-                for episode in episode_batch:
-                    with open(dataset_dir / f'{saved_episode_counter}.ljson', 'w') as f:
-                        f.writelines([json.dumps(step) + '\n' for step in episode])
+                    save_episode(dataset_dir / f'{saved_episode_counter}.ljson', save_episode_queue.get())
                     saved_episode_counter = (saved_episode_counter + 1) % max_saved_episodes
-            print(f'Saved {len(episode_batch)} episode{plural} in {time.time() - save_start_time:.2f} seconds')
+                for episode in episode_batch:
+                    save_episode(dataset_dir / f'{saved_episode_counter}.ljson', episode)
+                    saved_episode_counter = (saved_episode_counter + 1) % max_saved_episodes
+            print(f'Saved {n_items + len(episode_batch)} episode{plural} in '
+                  f'{time.time() - save_start_time:.2f} seconds')
             episode_batch = []
 
 
