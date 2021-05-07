@@ -73,7 +73,7 @@ class Agent:
     def __init__(self, obs: Observation, conf: Configuration):
         self.index = obs.index
 
-        obs_type = ge.ObsType.COMBINED_GRADIENT_OBS
+        obs_type = ge.ObsType.COMBINED_GRADIENT_OBS_LARGE
         n_channels = 64
         activation = nn.ReLU
         normalize = False
@@ -136,6 +136,7 @@ class Agent:
         self.model.eval()
         self.obs_type = obs_type
 
+        """
         dummy_state = torch.zeros(self.obs_type.get_obs_spec()[1:])
         dummy_head_loc = torch.arange(4).to(dtype=torch.int64)
         still_alive = torch.ones(4).to(dtype=torch.bool)
@@ -145,6 +146,7 @@ class Agent:
              dummy_head_loc.unsqueeze(0),
              still_alive.unsqueeze(0))
         )
+        """
 
         self.search_tree = BasicMCTS(
             action_mask_func=action_mask_func,
@@ -211,9 +213,9 @@ class Agent:
             my_best_action_idx = ACTION_SELECTION_FUNC(root_node)[self.index]
         else:
             if obs.step < 50:
-                dynamic_max_iter = 3
+                dynamic_max_iter = 4
             elif obs.step < 100:
-                dynamic_max_iter = 5
+                dynamic_max_iter = 6
             else:
                 dynamic_max_iter = MAX_SEARCH_ITER
             n_iter = 0
