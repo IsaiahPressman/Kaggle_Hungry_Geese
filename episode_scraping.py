@@ -128,7 +128,7 @@ def main(n_episodes: int):
 
     r = BUFFER
     n_calls = min(n_episodes, MAX_CALLS_PER_DAY)
-    print(f'Downloading {n_calls} episodes:')
+    print(f'Downloading {n_calls} episodes')
     start_time = datetime.datetime.now()
     se = 0
     for epid, value in sorted(ep_to_score.items(), key=lambda kv: kv[1], reverse=True):
