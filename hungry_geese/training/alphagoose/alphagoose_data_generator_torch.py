@@ -80,7 +80,7 @@ def main_env_worker(
     finally:
         # Delete references to shared CUDA tensors before exiting
         del shared_env, shared_policies
-        print('main_env_worker exited gracefully')
+        print('\n\nmain_env_worker exited gracefully\n\n')
 
 
 def mcts_worker(
@@ -130,16 +130,16 @@ def mcts_worker(
             policy_updated.wait()
 
             # Update model every update_model_freq iterations
-            step_counter = (step_counter + 1) % update_model_freq
-            if step_counter == 0:
+            step_counter += 1
+            if step_counter % update_model_freq == 0:
                 current_weights_path = reload_model_weights(model, weights_dir, current_weights_path, device)
             torch.cuda.synchronize(shared_env.device)
             step_taken.wait()
-            print(f'Finished step {step_counter} in {time.time() - step_start_time:.2f} seconds')
+            print(f'Finished step {step_counter:d} in {time.time() - step_start_time:.2f} seconds')
     finally:
         # Delete references to shared CUDA tensors before exiting
         del shared_env, shared_policies
-        print('mcts_search_worker exited gracefully')
+        print('\n\nmcts_search_worker exited gracefully\n\n')
 
 
 def start_alphagoose_data_generator(

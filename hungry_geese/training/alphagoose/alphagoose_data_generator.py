@@ -176,7 +176,7 @@ def save_episodes_worker(
                 save_start_time = time.time()
                 # Empty queue items that arrived while waiting for the lock
                 n_items = save_episode_queue.qsize()
-                plural = 'es' if len(episode_batch) != 1 else ''
+                plural = 'es' if n_items + len(episode_batch) != 1 else ''
                 print(f'Fetching {n_items + len(episode_batch)} episode{plural} from the queue.')
                 for i in range(n_items):
                     episode_batch.append(save_episode_queue.get())
