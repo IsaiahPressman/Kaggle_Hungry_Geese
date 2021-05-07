@@ -176,15 +176,15 @@ def save_episodes_worker(
                 save_start_time = time.time()
                 # Empty queue items that arrived while waiting for the lock
                 n_items = save_episode_queue.qsize()
-                print(f'Fetching {n_items + len(episode_batch)} episodes from the queue.')
+                plural = 'es' if len(episode_batch) != 1 else ''
+                print(f'Fetching {n_items + len(episode_batch)} episode{plural} from the queue.')
                 for i in range(n_items):
                     episode_batch.append(save_episode_queue.get())
                 for episode in episode_batch:
                     with open(dataset_dir / f'{saved_episode_counter}.ljson', 'w') as f:
                         f.writelines([json.dumps(step) + '\n' for step in episode])
                     saved_episode_counter = (saved_episode_counter + 1) % max_saved_episodes
-            print(f'Saved {len(episode_batch)} batch{"es" if len(episode_batch) != 1 else ""} in '
-                  f'{time.time() - save_start_time:.2f} seconds')
+            print(f'Saved {len(episode_batch)} episode{plural} in {time.time() - save_start_time:.2f} seconds')
             episode_batch = []
 
 
