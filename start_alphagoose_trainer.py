@@ -50,14 +50,6 @@ if __name__ == '__main__':
                 kernel_size=3,
                 activation=activation,
                 normalize=normalize,
-                use_mhsa=False
-            ),
-            dict(
-                in_channels=n_channels,
-                out_channels=n_channels,
-                kernel_size=3,
-                activation=activation,
-                normalize=normalize,
                 use_mhsa=use_mhsa,
                 mhsa_heads=4,
             ),
@@ -71,15 +63,16 @@ if __name__ == '__main__':
     model.to(device=DEVICE)
     optimizer = torch.optim.SGD(
         model.parameters(),
-        lr=0.0075,
+        lr=0.05,
         momentum=0.9,
-        weight_decay=1e-4
+        #weight_decay=1e-4
     )
+    batch_size = 2048
     # NB: lr_scheduler counts steps in batches, not epochs
     lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(
         optimizer,
-        #milestones=[200000 * i for i in [2, 4]],
-        milestones=[],
+        milestones=[int(100000 * 512 * i / batch_size) for i in [3]],
+        #milestones=[],
         gamma=0.1
     )
     dataset_kwargs = dict(
@@ -91,17 +84,17 @@ if __name__ == '__main__':
         ]),
     )
     dataloader_kwargs = dict(
-        batch_size=2048,
+        batch_size=batch_size,
         shuffle=True,
         num_workers=8,
-        pin_memory=True
+        pin_memory=False
     )
 
     experiment_name = 'alphagoose_' + format_experiment_name(obs_type,
                                                              ge.RewardType.RANK_ON_DEATH,
                                                              ge.ActionMasking.OPPOSITE,
                                                              [n_channels],
-                                                             model_kwargs['conv_block_kwargs']) + '_v0'
+                                                             model_kwargs['conv_block_kwargs']) + '_v1'
     exp_folder = Path(f'runs/alphagoose/active/{experiment_name}')
     train_alg = AlphaGooseTrainer(
         model=model,
@@ -109,12 +102,15 @@ if __name__ == '__main__':
         lr_scheduler=lr_scheduler,
         dataset_kwargs=dataset_kwargs,
         dataloader_kwargs=dataloader_kwargs,
-        # min_saved_steps=10,
         device=DEVICE,
         use_mixed_precision=True,
         exp_folder=exp_folder,
         checkpoint_freq=1,
         checkpoint_render_n_games=0,
+
+        # min_saved_steps=10,
+        min_saved_steps=int(5e5),
+        start_from_scratch=False,
     )
 
     try:

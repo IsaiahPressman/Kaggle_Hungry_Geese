@@ -53,14 +53,6 @@ def main():
                 kernel_size=3,
                 activation=activation,
                 normalize=normalize,
-                use_mhsa=False
-            ),
-            dict(
-                in_channels=n_channels,
-                out_channels=n_channels,
-                kernel_size=3,
-                activation=activation,
-                normalize=normalize,
                 use_mhsa=use_mhsa,
                 mhsa_heads=4,
             ),
@@ -75,7 +67,7 @@ def main():
                                                              ge.RewardType.RANK_ON_DEATH,
                                                              ge.ActionMasking.OPPOSITE,
                                                              [n_channels],
-                                                             model_kwargs['conv_block_kwargs']) + '_v0'
+                                                             model_kwargs['conv_block_kwargs']) + '_v1'
     weights_dir = Path(
         f'runs/alphagoose/active/{experiment_name}/all_checkpoints_pt'
     )
@@ -87,7 +79,7 @@ def main():
 
     env_kwargs = dict(
         config=Configuration(kaggle_make('hungry_geese', debug=False).configuration),
-        n_envs=2500,
+        n_envs=15_000,
         obs_type=obs_type,
         device=device,
     )
@@ -111,7 +103,7 @@ def main():
         dataset_dir=dataset_dir,
         weights_dir=weights_dir,
         allow_resume=True,
-        max_saved_batches=10000,
+        max_saved_batches=50_000,
         update_model_freq=10,
         env_kwargs=env_kwargs,
         model_kwargs=model_kwargs,
