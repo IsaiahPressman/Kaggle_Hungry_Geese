@@ -162,7 +162,9 @@ class AlphaGooseTrainer:
                     train_metrics['value_loss'].append(value_loss.detach().cpu().item())
                     train_metrics['combined_loss'].append(combined_loss.detach().cpu().item())
                     self.batch_counter += 1
-                self.log_train(train_metrics, len(dataloader))
+                data_len = len(dataloader)
+                del dataloader
+                self.log_train(train_metrics, data_len)
 
                 # Release lock to allow the data_generator to acquire the lock and save the latest episodes
                 lock.release()
@@ -174,12 +176,12 @@ class AlphaGooseTrainer:
                                                self.epoch_counter)
                 self.summary_writer.add_scalar(
                     'Time/batch_time_ms',
-                    1000. * epoch_time / (len(dataloader)),
+                    1000. * epoch_time / data_len,
                     self.epoch_counter
                 )
                 self.summary_writer.add_scalar(
                     'Time/sample_time_ms',
-                    1000. * epoch_time / len(dataset),
+                    1000. * epoch_time / data_len,
                     self.epoch_counter
                 )
                 self.epoch_counter += 1
