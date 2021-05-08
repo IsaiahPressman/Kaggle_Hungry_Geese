@@ -1,6 +1,7 @@
 from pathlib import Path
 import time
 import torch
+from torch.cuda import amp
 import torch.multiprocessing as mp
 from typing import *
 
@@ -93,6 +94,7 @@ def mcts_worker(
         weights_dir: Path,
         update_model_freq: int,
         device: torch.device,
+        use_mixed_precision: bool,
         env_kwargs: Dict,
         mcts_kwargs: Dict
 ) -> NoReturn:
@@ -119,7 +121,8 @@ def mcts_worker(
             step_start_time = time.time()
             # Perform search
             mcts.reset()
-            mcts.run_mcts(shared_env, local_env)
+            with amp.autocast(enabled=use_mixed_precision):
+                mcts.run_mcts(shared_env, local_env)
             print(f'Finished MCTS in {time.time() - step_start_time:.2f} seconds')
             torch.cuda.synchronize(shared_env.device)
             search_finished.wait()
@@ -148,6 +151,7 @@ def start_alphagoose_data_generator(
         allow_resume: bool,
         max_saved_batches: int,
         update_model_freq: int,
+        use_mixed_precision: bool,
         env_kwargs: Dict,
         model_kwargs: Dict,
         mcts_kwargs: Dict
@@ -212,6 +216,7 @@ def start_alphagoose_data_generator(
             weights_dir=weights_dir,
             update_model_freq=update_model_freq,
             device=shared_env.device,
+            use_mixed_precision=use_mixed_precision,
             env_kwargs=env_kwargs,
             mcts_kwargs=mcts_kwargs
         )
