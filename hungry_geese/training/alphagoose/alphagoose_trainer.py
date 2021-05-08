@@ -319,7 +319,8 @@ class AlphaGooseTrainer:
         # Save model params
         self.model.cpu()
         # Save model to weights_dir for data_generator_workers
-        torch.save(self.model.state_dict(), self.pt_weights_dir / f'{self.epoch_counter}.pt')
+        with FileLock(str(self.pt_weights_dir) + '.lock'):
+            torch.save(self.model.state_dict(), self.pt_weights_dir / f'{self.epoch_counter}.pt')
         state_dict_bytes = pickle.dumps(self.model.state_dict())
         serialized_string = base64.b64encode(state_dict_bytes)
         with open(save_dir / 'cp.txt', 'w') as f:

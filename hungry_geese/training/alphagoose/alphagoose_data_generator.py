@@ -136,19 +136,15 @@ def reload_model_weights(
         current_weights_path: Optional[Path],
         device: torch.device
 ) -> Path:
-    # Reload the model weights if a new trained model is available
-    latest_weights_path = get_latest_weights_file(weights_dir)
-    if current_weights_path != latest_weights_path:
-        reload_start_time = time.time()
-        try:
+    with FileLock(str(weights_dir) + '.lock'):
+        # Reload the model weights if a new trained model is available
+        latest_weights_path = get_latest_weights_file(weights_dir)
+        if current_weights_path != latest_weights_path:
+            reload_start_time = time.time()
             model.load_state_dict(torch.load(latest_weights_path, map_location=device))
-        # In case the model weights are being saved at the same moment that they are being reloaded
-        except EOFError:
-            time.sleep(0.5)
-            model.load_state_dict(torch.load(latest_weights_path, map_location=device))
-        model.eval()
-        print(f'Loaded model weights from {latest_weights_path.name} in '
-              f'{time.time() - reload_start_time:.2f} seconds')
+            model.eval()
+            print(f'Loaded model weights from {latest_weights_path.name} in '
+                  f'{time.time() - reload_start_time:.2f} seconds')
     return latest_weights_path
 
 
