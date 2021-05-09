@@ -10,8 +10,8 @@ import time
 # You should configure these to your needs. Choose one of ...
 # 'hungry-geese', 'rock-paper-scissors', santa-2020', 'halite', 'google-football'
 COMP = 'hungry-geese'
-# You should not make more than 3600 API calls per day. I have this set at 3550 just in case.
-MAX_CALLS_PER_DAY = 3550
+# You should not make more than 3600 API calls per day
+MAX_CALLS_PER_DAY = 3600
 LOWEST_SCORE_THRESH = 1000
 
 META = "episode_scraping/metadata/"
@@ -160,8 +160,10 @@ if __name__ == '__main__':
                                                  "NB: Do not download more than 3600 episodes per day, or you may be "
                                                  "banned from using their API.")
     parser.add_argument(
-        'n_episodes',
+        '-n',
+        '--n_episodes',
         type=int,
+        default=3550,
         help='How many episodes to download'
     )
     args = parser.parse_args()
