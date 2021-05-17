@@ -7,7 +7,6 @@ import numpy as np
 from pathlib import Path
 from scipy import stats
 import time
-import tqdm
 
 with contextlib.redirect_stdout(io.StringIO()):
     # Silence gfootball import error
@@ -103,7 +102,7 @@ if __name__ == '__main__':
     if args.n_workers == 1:
         results_and_game_lengths = []
         init_worker(args.debug, save_dir)
-        for i in tqdm.trange(args.n_games):
+        for i in range(args.n_games):
             results_and_game_lengths.append(get_game_result(agent_paths))
     else:
         agent_paths_broadcasted = []
@@ -114,8 +113,7 @@ if __name__ == '__main__':
                 initializer=init_worker,
                 initargs=(args.debug, save_dir)
         ) as pool:
-            results_and_game_lengths = list(tqdm.tqdm(pool.imap(get_game_result, agent_paths_broadcasted),
-                                                      total=args.n_games))
+            results_and_game_lengths = pool.map(get_game_result, agent_paths_broadcasted)
 
     all_results = []
     all_game_lengths = []
