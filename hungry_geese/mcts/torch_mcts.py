@@ -256,7 +256,7 @@ class TorchMCTS:
         if env_copy.dones.any():
             raise RuntimeError(f'{env_copy.dones.sum()} environments are finished - call env.reset() before continuing')
         # Loop until every env is at a leaf state
-        while (~self.tree.is_at_leaf & ~env_copy.dones).all():
+        while (~self.tree.is_at_leaf & ~env_copy.dones).any():
             actions = self.tree.get_puct_actions(env_copy.alive, self.c_puct)
             take_step_mask = ~self.tree.is_at_leaf & ~env_copy.dones
             env_copy.step(actions, take_step_mask)
