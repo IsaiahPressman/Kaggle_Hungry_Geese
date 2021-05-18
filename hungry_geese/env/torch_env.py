@@ -660,6 +660,21 @@ class TorchEnv:
     def copy_data_from(self, source: 'TorchEnv') -> NoReturn:
         source.copy_data_to(self)
 
+    def share_memory_(self) -> NoReturn:
+        self.geese.share_memory_()
+        self.geese_tensor.share_memory_()
+        self.head_ptrs.share_memory_()
+        self.tail_ptrs.share_memory_()
+        self.last_actions.share_memory_()
+        self.lengths.share_memory_()
+        self.rewards.share_memory_()
+        self.alive.share_memory_()
+        self.ate_last_turn.share_memory_()
+        self.food_tensor.share_memory_()
+        self.step_counters.share_memory_()
+        self.dones.share_memory_()
+        self.obs.share_memory_()
+
 
 def _get_geese_list(
         env_idx: int,

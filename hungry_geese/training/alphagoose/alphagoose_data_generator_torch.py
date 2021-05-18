@@ -51,7 +51,8 @@ def main_env_worker(
                 save_episode_queue.put_nowait(finished_episodes[env_idx])
                 finished_episodes[env_idx] = []
             print(f'Finished generating obs_dict in {time.time() - obs_dict_start_time:.2f} seconds')
-            torch.cuda.synchronize(shared_env.device)
+            if shared_env.device != torch.device('cpu'):
+                torch.cuda.synchronize(shared_env.device)
             search_finished.wait()
 
             policy_updated.wait()
@@ -76,7 +77,8 @@ def main_env_worker(
                         for goose_idx, goose in enumerate(step):
                             goose['final_rank'] = all_agent_rankings[env_idx, goose_idx].item() - 1.
                 shared_env.reset()
-            torch.cuda.synchronize(shared_env.device)
+            if shared_env.device != torch.device('cpu'):
+                torch.cuda.synchronize(shared_env.device)
             step_taken.wait()
     finally:
         # Delete references to shared CUDA tensors before exiting
@@ -124,19 +126,22 @@ def mcts_worker(
             with amp.autocast(enabled=use_mixed_precision):
                 mcts.run_mcts(shared_env, local_env)
             print(f'Finished MCTS in {time.time() - step_start_time:.2f} seconds')
-            torch.cuda.synchronize(shared_env.device)
+            if shared_env.device != torch.device('cpu'):
+                torch.cuda.synchronize(shared_env.device)
             search_finished.wait()
 
             # Update policies
             shared_policies[:] = mcts.tree.get_improved_policies()
-            torch.cuda.synchronize(shared_env.device)
+            if shared_env.device != torch.device('cpu'):
+                torch.cuda.synchronize(shared_env.device)
             policy_updated.wait()
 
             # Update model every update_model_freq iterations
             step_counter += 1
             if step_counter % update_model_freq == 0:
                 current_weights_path = reload_model_weights(model, weights_dir, current_weights_path, device)
-            torch.cuda.synchronize(shared_env.device)
+            if shared_env.device != torch.device('cpu'):
+                torch.cuda.synchronize(shared_env.device)
             step_taken.wait()
             print(f'Finished step {step_counter:d} in {time.time() - step_start_time:.2f} seconds')
     finally:
@@ -183,6 +188,8 @@ def start_alphagoose_data_generator(
         dtype=torch.float32,
         device=shared_env.device
     )
+    shared_env.share_memory_()
+    shared_policies.share_memory_()
 
     save_episode_queue = mp.Queue()
     search_finished = mp.Barrier(2)
