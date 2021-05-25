@@ -216,7 +216,7 @@ class TorchMCTSTree:
         assert policy_temp >= 0.
         visits_indexed = self.visits[self.env_idxs, self.ptrs]
         if policy_temp == 0.:
-            max_visits = visits_indexed.max(dim=-1, keepdim=True)
+            max_visits = visits_indexed.max(dim=-1, keepdim=True).values
             probs = (visits_indexed == max_visits).to(torch.float32)
         else:
             probs = torch.pow(visits_indexed, 1. / policy_temp)
