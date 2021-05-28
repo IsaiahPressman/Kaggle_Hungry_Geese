@@ -261,7 +261,14 @@ class TorchEnv:
         offsets = self.move_to_offset[actions]
         new_heads = self._wrap(self.heads + offsets)
         # Check for illegal actions
-        illegal_actions = ((self.last_actions - actions).abs() == 2) & update_geese
+        illegal_actions = ((self.last_actions - actions).abs() == 2) & update_geese & (self.step_counters.unsqueeze(-1) > 1)
+        # Update last action
+        self.last_actions[update_mask] = torch.where(
+            self.alive[update_mask],
+            actions[update_mask],
+            torch.zeros_like(self.last_actions[update_mask])
+        )
+        # Kill geese that took illegal actions
         self._kill_geese(illegal_actions)
         update_geese = self.alive & update_mask.unsqueeze(dim=-1)
 
@@ -314,12 +321,6 @@ class TorchEnv:
         ).view(self.n_envs, self.n_geese)
         # Update self.lengths
         self.lengths[grow_goose.view(self.n_envs, self.n_geese)] += 1
-        # Update last move
-        self.last_actions[:] = torch.where(
-            update_geese,
-            actions,
-            torch.zeros_like(self.last_actions)
-        )
 
         # Check if any geese collide with themselves
         self_collision = self.geese_tensor[

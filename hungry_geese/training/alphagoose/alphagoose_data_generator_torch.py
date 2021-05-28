@@ -58,11 +58,9 @@ def main_env_worker(
             policy_updated.wait()
 
             actions = torch.multinomial(
-                shared_policies.view(-1, 4),
+                (shared_policies == shared_policies.max(dim=-1, keepdim=True).values).view(-1, 4).to(torch.float32),
                 1
             ).view(-1, shared_env.n_geese)
-            raise NotImplementedError('Check that MCTS temperature is declared properly in'
-                                      ' start_alphagoose_data_generators.py script. Should be 0')
             shared_env.step(torch.where(
                 shared_env.alive,
                 actions,
