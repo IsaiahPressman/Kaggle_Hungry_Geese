@@ -48,16 +48,11 @@ Tunable parameters:
 C_PUCT: [0, inf) How much the MCTS algorithm should prioritize the predictions of the actor
     relative to the predictions of the rollouts and critic
     Larger values increase the priority of the critic, whereas smaller values increase the priority of the actor
-ACTION_SELECTION_FUNC: One of (Node.max_policy_actions, Node.max_policy_actions)
-    Node.max_policy_actions: Selects the final action by picking the action with the most visits (default)
-    Node.max_value_actions: Selects the final action by picking the action with the highest value
-    NB: Node.max_value_actions may sometimes pick actions with very few visits (and therefore a bad/unstable value_est)
 RESET_SEARCH: Whether to reset search at each timestep
 EXPECTED_END_STEP: Controls the time management of the agent
 OVERAGE_BUFFER: How much overage time to leave as a buffer for the steps after EXPECTED_END_STEP
 """
 C_PUCT = 1.
-ACTION_SELECTION_FUNC = Node.max_policy_actions
 DELTA = 0.08
 MIN_THRESHOLD_FOR_CONSIDERATION = 0.15
 MAX_SEARCH_ITER = 10
@@ -73,7 +68,7 @@ class Agent:
     def __init__(self, obs: Observation, conf: Configuration):
         self.index = obs.index
 
-        obs_type = ge.ObsType.COMBINED_GRADIENT_OBS_LARGE
+        obs_type = ge.ObsType.COMBINED_GRADIENT_OBS_SMALL
         n_channels = 64
         activation = nn.ReLU
         normalize = False
@@ -83,14 +78,6 @@ class Agent:
             conv_block_kwargs=[
                 dict(
                     in_channels=obs_type.get_obs_spec()[-3],
-                    out_channels=n_channels,
-                    kernel_size=3,
-                    activation=activation,
-                    normalize=normalize,
-                    use_mhsa=False
-                ),
-                dict(
-                    in_channels=n_channels,
                     out_channels=n_channels,
                     kernel_size=3,
                     activation=activation,
@@ -175,15 +162,14 @@ class Agent:
     def __call__(self, obs: Observation, conf: Configuration):
         self.preprocess(obs, conf)
         env = make_from_state(obs, self.last_actions)
-        # Remove excess nodes from dictionary to avoid memory explosion
         csr = env.canonical_string_repr(include_food=self.search_tree.include_food)
         if RESET_SEARCH:
             self.search_tree.reset()
         else:
+            # Remove excess nodes from dictionary to avoid memory explosion
             for key in list(self.search_tree.nodes.keys()):
                 if key.startswith(f'S: {obs.step - 1}') or (key.startswith(f'S: {obs.step}') and key != csr):
                     del self.search_tree.nodes[key]
-        # TODO: More intelligently allocate overage time when search results are uncertain
         remaining_overage_time = max(obs.remaining_overage_time - OVERAGE_BUFFER, 0.)
         search_start_time = time.time()
         self.search_tree.run_batch_mcts(
@@ -210,7 +196,7 @@ class Agent:
         ) or (
             actions_to_consider.sum() < 2
         ):
-            my_best_action_idx = ACTION_SELECTION_FUNC(root_node)[self.index]
+            my_best_action_idx = root_node.get_max_policy_actions()[self.index]
         else:
             if obs.step < 50:
                 dynamic_max_iter = 4
@@ -236,7 +222,7 @@ class Agent:
                     new_improved_policy.argmax() != initial_policy.argmax() and
                     new_improved_policy.max() >= 0.5
                 ):
-                    my_best_action_idx = ACTION_SELECTION_FUNC(root_node)[self.index]
+                    my_best_action_idx = root_node.get_max_policy_actions()[self.index]
                     break
                 elif (
                     promising_actions.any() and
@@ -253,11 +239,12 @@ class Agent:
                 improved_policy = new_improved_policy
                 n_iter += 1
             else:
-                my_best_action_idx = ACTION_SELECTION_FUNC(root_node)[self.index]
+                my_best_action_idx = root_node.get_max_policy_actions()[self.index]
         final_policies = root_node.get_improved_policies(temp=1.)
         q_vals = root_node.q_vals
         # Greedily select best action
         selected_action = tuple(Action)[my_best_action_idx].name
+        # TODO: Update print statement
         print(f'Step: {obs.step + 1}', end=' ')
         print(f'Index: {self.index}', end=' ')
         print(f'My initial policy: {print_array_one_line(initial_policy)}', end=' ')
