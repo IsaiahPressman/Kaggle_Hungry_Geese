@@ -12,6 +12,8 @@ from typing import *
 
 from .config import *
 
+STATE_TYPE = List[Dict]
+
 
 class ActionMasking(Enum):
     """
@@ -26,7 +28,7 @@ class ActionMasking(Enum):
     OPPOSITE = auto()
     LETHAL = auto()
 
-    def get_action_mask(self, state: List[Dict]) -> np.ndarray:
+    def get_action_mask(self, state: STATE_TYPE) -> np.ndarray:
         available_actions_mask = np.ones((len(state), 4), dtype=np.bool)
         if self == ActionMasking.NONE:
             pass

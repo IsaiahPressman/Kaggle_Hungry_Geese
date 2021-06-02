@@ -5,17 +5,18 @@ import torch.nn.functional as F
 from typing import *
 
 from ..env import goose_env as ge
-from hungry_geese.nns.models import FullConvActorCriticNetwork
+from ..nns.models import FullConvActorCriticNetwork
+from ..utils import STATE_TYPE
 
 
-def terminal_value_func(state: List[Dict]):
+def terminal_value_func(state: STATE_TYPE):
     agent_rankings = stats.rankdata([agent['reward'] for agent in state], method='average') - 1.
     ranks_rescaled = 2. * agent_rankings / (len(state) - 1.) - 1.
     return ranks_rescaled
 
 
 def actor_critic_factory(model: FullConvActorCriticNetwork, obs_type: ge.ObsType):
-    def actor_critic_func(state: List[Dict]):
+    def actor_critic_func(state: STATE_TYPE):
         geese = state[0]['observation']['geese']
         n_geese = len(geese)
 
@@ -49,7 +50,7 @@ def actor_critic_factory(model: FullConvActorCriticNetwork, obs_type: ge.ObsType
 def batch_actor_critic_factory(model: FullConvActorCriticNetwork,
                                obs_type: ge.ObsType,
                                float_precision: torch.dtype):
-    def batch_actor_critic_func(states: List[List[Dict]], device: torch.device):
+    def batch_actor_critic_func(states: List[STATE_TYPE], device: torch.device):
         obs_list = []
         head_locs_list = []
         still_alive_list = []

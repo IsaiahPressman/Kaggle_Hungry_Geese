@@ -4,6 +4,7 @@ import torch
 
 from ..config import N_PLAYERS
 from .goose_env import ObsType
+from ..utils import STATE_TYPE
 
 ACTIONS_TUPLE = tuple(Action)
 
@@ -592,7 +593,7 @@ class TorchEnv:
 
         return self.obs
 
-    def generate_obs_dicts(self, selected_envs_mask: Optional[torch.Tensor] = None) -> List[List[Dict]]:
+    def generate_obs_dicts(self, selected_envs_mask: Optional[torch.Tensor] = None) -> List[STATE_TYPE]:
         return generate_obs_dicts(
             n_envs=self.n_envs,
             n_geese=self.n_geese,
@@ -719,7 +720,7 @@ def generate_obs_dicts(
         row_col_to_loc: torch.Tensor,
         food_tensor: torch.Tensor,
         selected_envs_mask: Optional[torch.Tensor] = None
-) -> List[List[Dict]]:
+) -> List[STATE_TYPE]:
     all_dicts = []
     if selected_envs_mask is None:
         selected_envs_mask = torch.ones(dones.shape, dtype=torch.bool)

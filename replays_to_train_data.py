@@ -13,10 +13,10 @@ from scipy import stats
 import tqdm
 from typing import *
 
-from hungry_geese.utils import read_json
+from hungry_geese.utils import STATE_TYPE, read_json
 
 
-def process_replay_file(replay_dict: Dict) -> List[List[Dict]]:
+def process_replay_file(replay_dict: Dict) -> List[STATE_TYPE]:
     env = kaggle_environments.make(
         'hungry_geese',
         configuration=replay_dict['configuration'],

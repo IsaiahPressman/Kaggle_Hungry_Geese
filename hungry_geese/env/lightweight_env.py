@@ -6,6 +6,7 @@ from random import sample
 from typing import *
 
 from ..config import N_PLAYERS
+from ..utils import STATE_TYPE
 
 
 ACTIONS_TUPLE = tuple(Action)
@@ -31,7 +32,7 @@ class LightweightEnv:
 
         self.reset()
 
-    def reset(self, num_agents: int = N_PLAYERS) -> List[Dict]:
+    def reset(self, num_agents: int = N_PLAYERS) -> STATE_TYPE:
         self.agent_count = num_agents
         heads = sample(range(self.n_cols * self.n_rows), self.agent_count)
         self.geese = [[head] for head in heads]
@@ -158,7 +159,7 @@ class LightweightEnv:
         self.steps.append(state_dict_list)
 
     @property
-    def state(self) -> List[Dict]:
+    def state(self) -> STATE_TYPE:
         return self.steps[-1]
 
     @property

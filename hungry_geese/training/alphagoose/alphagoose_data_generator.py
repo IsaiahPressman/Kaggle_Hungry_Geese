@@ -19,7 +19,7 @@ from ...env.lightweight_env import LightweightEnv, make
 from ...mcts.basic_mcts import BasicMCTS
 from ...mcts.utils import terminal_value_func, batch_actor_critic_factory
 from hungry_geese.nns.models import FullConvActorCriticNetwork
-from ...utils import ActionMasking
+from ...utils import STATE_TYPE, ActionMasking
 
 
 def alphagoose_data_generator_worker(
@@ -157,7 +157,7 @@ def get_latest_weights_file(weights_dir: Path) -> Path:
     return all_weight_files[-1]
 
 
-def save_episode(episode_path: Path, episode: List[Dict]) -> NoReturn:
+def save_episode(episode_path: Path, episode: STATE_TYPE) -> NoReturn:
     with open(episode_path, 'w') as f:
         f.writelines([json.dumps(step) + '\n' for step in episode])
 

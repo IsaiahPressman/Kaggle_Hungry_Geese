@@ -3,7 +3,7 @@ import time
 from typing import *
 
 from ..env.lightweight_env import LightweightEnv
-from ..utils import rowwise_random_choice
+from ..utils import STATE_TYPE, rowwise_random_choice
 
 
 class Node:
@@ -248,7 +248,7 @@ class BasicMCTS:
             env: LightweightEnv,
             trajectory: Tuple[Tuple[str, Optional[np.ndarray]], ...] = ()
     ) -> Tuple[
-        List[Dict],
+        STATE_TYPE,
         Tuple[Tuple[str, Optional[Tuple[int]]], ...],
         bool,
         Optional[List[bool]],
