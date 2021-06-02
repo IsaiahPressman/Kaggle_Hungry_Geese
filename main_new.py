@@ -7,14 +7,15 @@ import time
 import torch
 from torch import nn
 import torch.nn.functional as F
+from typing import *
 
 # See https://www.kaggle.com/c/google-football/discussion/191257
 sys.path.append('/kaggle_simulations/agent/')
 from hungry_geese.config import *
 from hungry_geese.utils import ActionMasking, row_col, print_array_one_line
 from hungry_geese.env import goose_env as ge
-from hungry_geese.env.lightweight_env import make_from_state
-from hungry_geese.mcts.basic_mcts import Node, BasicMCTS
+from hungry_geese.env.lightweight_env import LightweightEnv, make_from_state
+from hungry_geese.mcts.basic_mcts import BasicMCTS, Node
 from hungry_geese.nns import conv_blocks, models
 
 BOARD_DIMS = np.array([N_ROWS, N_COLS])
@@ -33,7 +34,7 @@ def get_direction(from_loc: np.ndarray, to_loc: np.ndarray) -> Action:
     return DIRECTIONS_DICT[tuple(wrap(to_loc - from_loc))]
 
 
-def terminal_value_func(state):
+def terminal_value_func(state: List[Dict]) -> np.ndarray:
     agent_rankings = stats.rankdata([agent['reward'] for agent in state], method='average') - 1.
     ranks_rescaled = 2. * agent_rankings / (len(state) - 1.) - 1.
     return ranks_rescaled
@@ -180,7 +181,7 @@ class Agent:
                 self.last_actions[goose_idx] = Action.NORTH
                 self.last_head_locs[goose_idx] = None
 
-    def __call__(self, obs: Observation, conf: Configuration):
+    def __call__(self, obs: Observation, conf: Configuration) -> str:
         self.preprocess(obs, conf)
         env = make_from_state(obs, self.last_actions)
         csr = env.canonical_string_repr(include_food=self.search_tree.include_food)
@@ -191,76 +192,8 @@ class Agent:
             for key in list(self.search_tree.nodes.keys()):
                 if key.startswith(f'S: {obs.step - 1}') or (key.startswith(f'S: {obs.step}') and key != csr):
                     del self.search_tree.nodes[key]
-        remaining_overage_time = max(obs.remaining_overage_time - OVERAGE_BUFFER, 0.)
         search_start_time = time.time()
-        self.search_tree.run_batch_mcts(
-            env=env,
-            batch_size=BATCH_SIZE,
-            n_iter=10000,
-            max_time=PER_ROUND_BATCHED_TIME_ALLOCATION
-        )
-        root_node = self.search_tree.run_batch_mcts(
-            env=env,
-            batch_size=min(BATCH_SIZE, 2),
-            n_iter=10000,
-            max_time=max(0.93 - (time.time() - search_start_time), 0.)
-        )
-        initial_policy = root_node.initial_policies[self.index]
-        improved_policy = root_node.get_improved_policies(temp=1.)[self.index]
-        actions_to_consider = improved_policy >= MIN_THRESHOLD_FOR_CONSIDERATION
-        # Stop search if the following conditions are met
-        if (
-            improved_policy.argmax() == initial_policy.argmax() and
-            improved_policy.max() >= initial_policy.max()
-        ) or (
-            initial_policy.max() >= 0.95
-        ) or (
-            actions_to_consider.sum() < 2
-        ):
-            my_best_action_idx = root_node.get_max_policy_actions()[self.index]
-        else:
-            if obs.step < 50:
-                dynamic_max_iter = 4
-            elif obs.step < 100:
-                dynamic_max_iter = 6
-            else:
-                dynamic_max_iter = MAX_SEARCH_ITER
-            n_iter = 0
-            while n_iter < MAX_SEARCH_ITER and n_iter < dynamic_max_iter:
-                root_node = self.search_tree.run_batch_mcts(
-                    env=env,
-                    batch_size=BATCH_SIZE,
-                    n_iter=10000,
-                    max_time=min(0.5, remaining_overage_time - (time.time() - search_start_time))
-                )
-                new_improved_policy = root_node.get_improved_policies(temp=1.)[self.index]
-                promising_actions = (new_improved_policy > initial_policy) & actions_to_consider
-                if (
-                    new_improved_policy.argmax() == initial_policy.argmax() and
-                    new_improved_policy.max() >= initial_policy.max()
-                ) or (
-                    new_improved_policy.argmax() == improved_policy.argmax() and
-                    new_improved_policy.argmax() != initial_policy.argmax() and
-                    new_improved_policy.max() >= 0.5
-                ):
-                    my_best_action_idx = root_node.get_max_policy_actions()[self.index]
-                    break
-                elif (
-                    promising_actions.any() and
-                    new_improved_policy[promising_actions].argmax() == initial_policy[promising_actions].argmax() and
-                    new_improved_policy[promising_actions].max() >= initial_policy[promising_actions].max() + DELTA
-                ):
-                    my_best_action_idx = np.arange(4)[
-                        new_improved_policy == new_improved_policy[promising_actions].max()
-                    ]
-                    if len(my_best_action_idx.ravel()) == 1:
-                        my_best_action_idx = int(my_best_action_idx.item())
-                        print('Stopping search early!', end=' ')
-                        break
-                improved_policy = new_improved_policy
-                n_iter += 1
-            else:
-                my_best_action_idx = root_node.get_max_policy_actions()[self.index]
+        my_best_action_idx, root_node = self.run_search(obs, env)
         final_policies = root_node.get_improved_policies(temp=1.)
         q_vals = root_node.q_vals
         
@@ -291,21 +224,96 @@ class Agent:
         
         # Greedily select best action
         selected_action = tuple(Action)[my_best_action_idx].name
-        # TODO: Update print statement
-        print(f'Step: {obs.step + 1}', end=' ')
-        print(f'Index: {self.index}', end=' ')
-        print(f'My initial policy: {print_array_one_line(initial_policy)}', end=' ')
-        print(f'My improved policy: {print_array_one_line(final_policies[self.index])}', end=' ')
-        print(f'My Q-values: {print_array_one_line(q_vals[self.index])}', end=' ')
-        print(f'Selected action: {selected_action}', end=' ')
-        print(f'N-visits: {root_node.n_visits.sum(axis=1)[self.index]:.0f}', end=' ')
-        print(f'Time allotted: {time.time() - search_start_time:.2f}', end=' ')
-        print(f'Remaining overage time: {obs.remaining_overage_time:.2f}', end=' ')
-        print(f'All initial values: {print_array_one_line(root_node.initial_values)}', end=' ')
-        print(f'All policies: {print_array_one_line(final_policies)}', end=' ')
-        print(f'All Q-values: {print_array_one_line(q_vals)}', end=' ')
-        print()
+        print(
+            f'Step: {obs.step + 1} '
+            f'Index: {self.index} '
+            f'My initial policy: {print_array_one_line(root_node.initial_policies[self.index])} '
+            f'My improved policy: {print_array_one_line(final_policies[self.index])} '
+            f'My Q-values: {print_array_one_line(q_vals[self.index])} '
+            f'Selected action: {selected_action} '
+            f'N-visits: {root_node.n_visits.sum(axis=1)[self.index]:.0f} '
+            f'Time allotted: {time.time() - search_start_time:.2f} '
+            f'Remaining overage time: {obs.remaining_overage_time:.2f} '
+            f'All initial values: {print_array_one_line(root_node.initial_values)} '
+            f'All policies: {print_array_one_line(final_policies)} '
+            f'All Q-values: {print_array_one_line(q_vals)} '
+        )
         return selected_action
+
+    def run_search(self, obs: Observation, env: LightweightEnv) -> Tuple[int, Node]:
+        remaining_overage_time = max(obs.remaining_overage_time - OVERAGE_BUFFER, 0.)
+        search_start_time = time.time()
+        self.search_tree.run_batch_mcts(
+            env=env,
+            batch_size=BATCH_SIZE,
+            n_iter=10000,
+            max_time=PER_ROUND_BATCHED_TIME_ALLOCATION
+        )
+        root_node = self.search_tree.run_batch_mcts(
+            env=env,
+            batch_size=min(BATCH_SIZE, 2),
+            n_iter=10000,
+            max_time=max(0.93 - (time.time() - search_start_time), 0.)
+        )
+        initial_policy = root_node.initial_policies[self.index]
+        improved_policy = root_node.get_improved_policies(temp=1.)[self.index]
+        actions_to_consider = improved_policy >= MIN_THRESHOLD_FOR_CONSIDERATION
+        # Stop search if the following conditions are met
+        if (
+                improved_policy.argmax() == initial_policy.argmax() and
+                improved_policy.max() >= initial_policy.max()
+        ) or (
+                initial_policy.max() >= 0.95
+        ) or (
+                actions_to_consider.sum() < 2
+        ):
+            my_best_action_idx = root_node.get_max_policy_actions()[self.index]
+        else:
+            if obs.step < 50:
+                dynamic_max_iter = 4
+            elif obs.step < 100:
+                dynamic_max_iter = 6
+            else:
+                dynamic_max_iter = MAX_SEARCH_ITER
+            n_iter = 0
+            while n_iter < MAX_SEARCH_ITER and n_iter < dynamic_max_iter:
+                root_node = self.search_tree.run_batch_mcts(
+                    env=env,
+                    batch_size=BATCH_SIZE,
+                    n_iter=10000,
+                    max_time=min(0.5, remaining_overage_time - (time.time() - search_start_time))
+                )
+                new_improved_policy = root_node.get_improved_policies(temp=1.)[self.index]
+                promising_actions = (new_improved_policy > initial_policy) & actions_to_consider
+                if (
+                        new_improved_policy.argmax() == initial_policy.argmax() and
+                        new_improved_policy.max() >= initial_policy.max()
+                ) or (
+                        new_improved_policy.argmax() == improved_policy.argmax() and
+                        new_improved_policy.argmax() != initial_policy.argmax() and
+                        new_improved_policy.max() >= 0.5
+                ):
+                    my_best_action_idx = root_node.get_max_policy_actions()[self.index]
+                    break
+                elif (
+                        promising_actions.any() and
+                        new_improved_policy[promising_actions].argmax() == initial_policy[
+                            promising_actions].argmax() and
+                        new_improved_policy[promising_actions].max() >= initial_policy[promising_actions].max() + DELTA
+                ):
+                    my_best_action_idx = np.arange(4)[
+                        new_improved_policy == new_improved_policy[promising_actions].max()
+                        ]
+                    if len(my_best_action_idx.ravel()) == 1:
+                        my_best_action_idx = int(my_best_action_idx.item())
+                        print('Stopping search early!', end=' ')
+                        break
+                improved_policy = new_improved_policy
+                n_iter += 1
+            else:
+                my_best_action_idx = root_node.get_max_policy_actions()[self.index]
+
+        return my_best_action_idx, root_node
 
     def batch_actor_critic_func(self, state_batch):
         obs_list = []
@@ -352,7 +360,7 @@ class Agent:
 AGENT = None
 
 
-def call_agent(obs, conf):
+def call_agent(obs: Dict, conf: Dict):
     global AGENT
 
     obs = Observation(obs)
