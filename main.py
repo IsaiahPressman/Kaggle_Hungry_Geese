@@ -401,7 +401,13 @@ class Agent:
                 keepdim=True
             ) / (entropy(masked_action_masks[current_step - 1], dim=-1, keepdim=True) + eps)
         kl_divs_with_noise.sum().backward()
-        torch.nn.utils.clip_grad_value_(self.noise_weight_logits, 1.)
+        if NOISE_TYPE == 'linear':
+            clip_val = 0.25 / NOISE_OPT_LR
+        elif NOISE_TYPE == 'sigmoid':
+            clip_val = 1. / NOISE_OPT_LR
+        else:
+            raise ValueError(f'Unrecognized NOISE_TYPE: {NOISE_TYPE}')
+        torch.nn.utils.clip_grad_value_(self.noise_weight_logits, clip_val)
         printable_noise_grads = np.where(
             update_mask,
             self.noise_weight_logits.grad.numpy().ravel(),
