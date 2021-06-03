@@ -103,13 +103,13 @@ OVERAGE_BUFFER = 1.
 PER_ROUND_BATCHED_TIME_ALLOCATION = 0.9
 BATCH_SIZE = 1
 
-STARTING_NOISE = 0.05
+NOISE_TYPE = 'linear'
 MIN_NOISE = 0.02
 MAX_NOISE = 0.75
-NOISE_OPT_LR = 2.
-NOISE_OPT_MOMENTUM = 0.4
-
-assert C_PUCT >= 0.
+STARTING_NOISE = 0.1
+NOISE_OPT_LR = 1.
+NOISE_OPT_MOMENTUM = 0.7
+UPDATE_NOISE_BASED_ON_ALL_STEPS = True
 
 
 class Agent:
@@ -195,11 +195,16 @@ class Agent:
         )
         self.last_head_locs = [row_col(goose[0]) for goose in obs.geese]
         self.last_actions = [Action.NORTH for _ in range(self.n_geese)]
-        self.noise_weight_logits = inverse_scaled_sigmoid(
-            torch.tensor([STARTING_NOISE] * self.n_geese),
-            MIN_NOISE,
-            MAX_NOISE
-        )
+        if NOISE_TYPE == 'linear':
+            self.noise_weight_logits = torch.tensor([STARTING_NOISE] * self.n_geese)
+        elif NOISE_TYPE == 'sigmoid':
+            self.noise_weight_logits = inverse_scaled_sigmoid(
+                torch.tensor([STARTING_NOISE] * self.n_geese),
+                MIN_NOISE,
+                MAX_NOISE
+            )
+        else:
+            raise ValueError(f'Unrecognized NOISE_TYPE: {NOISE_TYPE}')
         self.noise_weight_logits = self.noise_weight_logits.view(1, self.n_geese, 1).requires_grad_()
         self.noise_opt = torch.optim.SGD(
             (self.noise_weight_logits,),
@@ -374,24 +379,26 @@ class Agent:
         all_steps_noise = torch.ones((1, 1, 4), dtype=torch.float32) * self.all_action_masks[:current_step]
         all_steps_noise = all_steps_noise / all_steps_noise.sum(dim=-1, keepdim=True)
         self.noise_opt.zero_grad()
-        """
-        # Update noise_weights based on all previous experience
-        masked_noise = all_steps_noise[:, update_mask]
-        kl_divs_with_noise = kl_divergence(
-            masked_actions[:current_step],
-            masked_policy_preds[:current_step] * (1. - masked_noise_weights) + masked_noise * masked_noise_weights,
-            dim=-1,
-            keepdim=True
-        ) / (entropy(masked_action_masks[:current_step], dim=-1, keepdim=True) + eps)
-        """
-        # Update noise_weights based only on the last step
-        masked_noise = last_step_noise[:, update_mask]
-        kl_divs_with_noise = kl_divergence(
-            masked_actions[current_step - 1],
-            (1. - masked_noise_weights) * masked_policy_preds[current_step - 1] + masked_noise_weights * masked_noise,
-            dim=-1,
-            keepdim=True
-        ) / (entropy(masked_action_masks[current_step - 1], dim=-1, keepdim=True) + eps)
+        if UPDATE_NOISE_BASED_ON_ALL_STEPS:
+            # Update noise_weights based on all previous experience
+            masked_noise = all_steps_noise[:, update_mask]
+            kl_divs_with_noise = kl_divergence(
+                masked_actions[:current_step],
+                masked_policy_preds[:current_step] * (1. - masked_noise_weights) + masked_noise * masked_noise_weights,
+                dim=-1,
+                keepdim=True
+            ) / (entropy(masked_action_masks[:current_step], dim=-1, keepdim=True) + eps)
+            # Ensures consistent gradient sizing no matter the timestep
+            kl_divs_with_noise = kl_divs_with_noise.mean(dim=0)
+        else:
+            # Update noise_weights based only on the last step
+            masked_noise = last_step_noise[:, update_mask]
+            kl_divs_with_noise = kl_divergence(
+                masked_actions[current_step - 1],
+                (1. - masked_noise_weights) * masked_policy_preds[current_step - 1] + masked_noise_weights * masked_noise,
+                dim=-1,
+                keepdim=True
+            ) / (entropy(masked_action_masks[current_step - 1], dim=-1, keepdim=True) + eps)
         kl_divs_with_noise.sum().backward()
         torch.nn.utils.clip_grad_value_(self.noise_weight_logits, 1.)
         printable_noise_grads = np.where(
@@ -400,6 +407,13 @@ class Agent:
             float('nan')
         )
         self.noise_opt.step()
+        if NOISE_TYPE == 'linear':
+            with torch.no_grad():
+                self.noise_weight_logits.clamp_(MIN_NOISE, MAX_NOISE)
+        elif NOISE_TYPE == 'sigmoid':
+            pass
+        else:
+            raise ValueError(f'Unrecognized NOISE_TYPE: {NOISE_TYPE}')
 
         with torch.no_grad():
             kl_divs_with_noise = kl_divergence(
@@ -444,7 +458,7 @@ class Agent:
             )
             probs = F.softmax(logits, dim=-1).numpy().astype(np.float)
             # masked_policy_preds[current_step - 1] * (1. - masked_noise_weights) + masked_noise * masked_noise_weights,
-            noise = np.ones((1, 4), dtype=np.float32)
+            noise = np.ones((1, 1, 4), dtype=np.float32)
             noise = noise / noise.sum(axis=-1, keepdims=True)
             noise_weights = self.noise_weights.numpy()
             probs = (1. - noise_weights) * probs + noise_weights * noise
@@ -469,9 +483,15 @@ class Agent:
 
     @property
     def noise_weights(self) -> torch.Tensor:
+        if NOISE_TYPE == 'linear':
+            noise = self.noise_weight_logits
+        elif NOISE_TYPE == 'sigmoid':
+            noise = scaled_sigmoid(self.noise_weight_logits, MIN_NOISE, MAX_NOISE)
+        else:
+            raise ValueError(f'Unrecognized NOISE_TYPE: {NOISE_TYPE}')
         return torch.where(
             (torch.arange(self.n_geese) != self.index).view(self.noise_weight_logits.shape),
-            scaled_sigmoid(self.noise_weight_logits, MIN_NOISE, MAX_NOISE),
+            noise,
             torch.zeros_like(self.noise_weight_logits)
         )
 
