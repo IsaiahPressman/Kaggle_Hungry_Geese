@@ -67,8 +67,8 @@ class Node:
             raise RuntimeError(f'Values should be of shape {(self.n_geese, 1)}, got {values.shape}')
         if self.enforce_values and not np.isclose(values.sum(), 0., atol=1e-2):
             raise RuntimeError(f'Values should sum to 0, got {values.ravel()} which sums to {values.sum()}')
-        if (values.ravel()[self.geese_still_playing].min(initial=float('inf')) <=
-                values.ravel()[~self.geese_still_playing].max(initial=float('-inf'))):
+        if self.enforce_values and (values.ravel()[self.geese_still_playing].min(initial=float('inf')) <=
+                                    values.ravel()[~self.geese_still_playing].max(initial=float('-inf'))):
             raise RuntimeError(f'Values for dead geese should always be less than those for still living geese.\n'
                                f'Values:\n{values.ravel()}\n'
                                f'Geese still playing:\n{self.geese_still_playing}\n')
