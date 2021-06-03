@@ -363,13 +363,20 @@ class Agent:
             keepdim=True,
             eps=0.
         ) / (entropy(self.all_action_masks[:current_step], dim=-1, keepdim=True) + eps)
+        overall_kl_divs = torch.where(
+            torch.isinf(overall_kl_divs),
+            torch.ones_like(overall_kl_divs),
+            overall_kl_divs
+        )
 
-        noise = torch.ones((1, 1, 4), dtype=torch.float32) * self.all_action_masks[current_step - 1]
-        noise = noise / noise.sum(dim=-1, keepdim=True)
-        masked_noise = noise[:, update_mask]
+        last_step_noise = torch.ones((1, 1, 4), dtype=torch.float32) * self.all_action_masks[current_step - 1]
+        last_step_noise = last_step_noise / last_step_noise.sum(dim=-1, keepdim=True)
+        all_steps_noise = torch.ones((1, 1, 4), dtype=torch.float32) * self.all_action_masks[:current_step]
+        all_steps_noise = all_steps_noise / all_steps_noise.sum(dim=-1, keepdim=True)
         self.noise_opt.zero_grad()
         """
         # Update noise_weights based on all previous experience
+        masked_noise = all_steps_noise[:, update_mask]
         kl_divs_with_noise = kl_divergence(
             masked_actions[:current_step],
             masked_policy_preds[:current_step] * (1. - masked_noise_weights) + masked_noise * masked_noise_weights,
@@ -378,6 +385,7 @@ class Agent:
         ) / (entropy(masked_action_masks[:current_step], dim=-1, keepdim=True) + eps)
         """
         # Update noise_weights based only on the last step
+        masked_noise = last_step_noise[:, update_mask]
         kl_divs_with_noise = kl_divergence(
             masked_actions[current_step - 1],
             (1. - masked_noise_weights) * masked_policy_preds[current_step - 1] + masked_noise_weights * masked_noise,
@@ -396,18 +404,19 @@ class Agent:
         with torch.no_grad():
             kl_divs_with_noise = kl_divergence(
                 self.all_actions[:current_step],
-                (1. - self.noise_weights) * self.all_policy_preds[:current_step] + self.noise_weights * noise,
+                (1. - self.noise_weights) * self.all_policy_preds[:current_step] + self.noise_weights * all_steps_noise,
                 dim=-1,
                 keepdim=True,
                 eps=0.
             ) / (entropy(self.all_action_masks[:current_step], dim=-1, keepdim=True) + eps)
+            kl_divs_with_noise = torch.where(
+                torch.isinf(kl_divs_with_noise),
+                torch.ones_like(kl_divs_with_noise),
+                kl_divs_with_noise
+            )
             info += f'Noise gradients: {print_array_one_line(printable_noise_grads)} '
             info += f'Noise logits: {print_array_one_line(self.noise_weight_logits.numpy().ravel())} '
             info += f'Noise weights: {print_array_one_line(self.noise_weights.view(-1).numpy())} '
-        if np.isinf(overall_kl_divs[-1]).any():
-            print(self.all_actions[-1][np.isinf(overall_kl_divs[-1])],
-                  self.all_policy_preds[-1][np.isinf(overall_kl_divs[-1])],
-                  self.all_action_masks[-1][np.isinf(overall_kl_divs[-1])])
         info += f'Pre-noise KL-divergences: {print_array_one_line(overall_kl_divs.mean(dim=0).numpy().ravel())} '
         info += f'Post-noise KL-divergences: {print_array_one_line(kl_divs_with_noise.mean(dim=0).numpy().ravel())}'
         return info
