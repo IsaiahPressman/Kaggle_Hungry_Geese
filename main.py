@@ -271,7 +271,7 @@ class Agent:
             f'N-visits: {root_node.n_visits.sum(axis=1)[self.index]:.0f} '
             f'Time allotted: {time.time() - search_start_time:.2f} '
             f'Remaining overage time: {obs.remaining_overage_time:.2f} '
-            f'All initial values: {print_array_one_line(root_node.initial_values)} '
+            f'All initial values: {print_array_one_line(root_node.initial_values.ravel())} '
             f'All policies: {print_array_one_line(final_policies)} '
             f'All Q-values: {print_array_one_line(q_vals)} '
             f'{noise_weights_logging} '
@@ -428,8 +428,13 @@ class Agent:
                 torch.ones_like(kl_divs_with_noise),
                 kl_divs_with_noise
             )
+            printable_noise_weights_logits = np.where(
+                update_mask,
+                self.noise_weight_logits.numpy().ravel(),
+                float('nan')
+            )
             info += f'Noise gradients: {print_array_one_line(printable_noise_grads)} '
-            info += f'Noise logits: {print_array_one_line(self.noise_weight_logits.numpy().ravel())} '
+            info += f'Noise logits: {print_array_one_line(printable_noise_weights_logits)} '
             info += f'Noise weights: {print_array_one_line(self.noise_weights.view(-1).numpy())} '
         info += f'Pre-noise KL-divergences: {print_array_one_line(overall_kl_divs.mean(dim=0).numpy().ravel())} '
         info += f'Post-noise KL-divergences: {print_array_one_line(kl_divs_with_noise.mean(dim=0).numpy().ravel())}'
