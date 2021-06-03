@@ -12,7 +12,8 @@ class Node:
             geese_still_playing_mask: Sequence[bool],
             available_actions_masks: Optional[np.ndarray],
             initial_policies: np.ndarray,
-            initial_values: np.ndarray
+            initial_values: np.ndarray,
+            enforce_values: bool = True
     ):
         self.geese_still_playing = np.array(geese_still_playing_mask)
         self.n_geese = len(self.geese_still_playing)
@@ -52,6 +53,7 @@ class Node:
         if initial_values.shape != (self.n_geese, 1):
             raise RuntimeError(f'Initial_values should be of shape {(self.n_geese, 1)}, got {initial_values.shape}')
         self.initial_values = initial_values
+        self.enforce_values = enforce_values
 
         self.q_vals = np.zeros_like(self.initial_policies)
         self.n_visits = np.zeros_like(self.initial_policies)
@@ -63,7 +65,7 @@ class Node:
             values = values[:, np.newaxis]
         if values.shape != (self.n_geese, 1):
             raise RuntimeError(f'Values should be of shape {(self.n_geese, 1)}, got {values.shape}')
-        if not np.isclose(values.sum(), 0., atol=1e-2):
+        if self.enforce_values and not np.isclose(values.sum(), 0., atol=1e-2):
             raise RuntimeError(f'Values should sum to 0, got {values.ravel()} which sums to {values.sum()}')
         if (values.ravel()[self.geese_still_playing].min(initial=float('inf')) <=
                 values.ravel()[~self.geese_still_playing].max(initial=float('-inf'))):
@@ -188,6 +190,7 @@ class BasicMCTS:
             noise_val: float = 2.,
             noise_weight: float = 0.25,
             include_food: bool = True,
+            enforce_values: bool = True
     ):
         self.action_mask_func = action_mask_func
         self.actor_critic_func = actor_critic_func
@@ -198,6 +201,7 @@ class BasicMCTS:
         self.noise_val = noise_val
         self.noise_weight = noise_weight
         self.include_food = include_food
+        self.enforce_values = enforce_values
         self.nodes = {}
 
     def _search(
@@ -232,7 +236,8 @@ class BasicMCTS:
                 [status == 'ACTIVE' for status in env.get_statuses()],
                 self.action_mask_func(full_state),
                 policy_est,
-                value_est
+                value_est,
+                enforce_values=self.enforce_values
             )
             return value_est
 
@@ -292,7 +297,8 @@ class BasicMCTS:
                     still_alive,
                     available_actions,
                     policy_est,
-                    value_est
+                    value_est,
+                    enforce_values=self.enforce_values
                 )
 
     def run_mcts(
