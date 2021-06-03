@@ -192,6 +192,7 @@ class Agent:
             c_puct=C_PUCT,
             virtual_loss=3.,
             include_food=False,
+            enforce_values=False
         )
         self.last_head_locs = [row_col(goose[0]) for goose in obs.geese]
         self.last_actions = [Action.NORTH for _ in range(self.n_geese)]
@@ -462,11 +463,10 @@ class Agent:
                 torch.tensor(still_alive_list)
             )
             probs = F.softmax(logits, dim=-1).numpy().astype(np.float)
-            # masked_policy_preds[current_step - 1] * (1. - masked_noise_weights) + masked_noise * masked_noise_weights,
-            noise = np.ones((1, 1, 4), dtype=np.float32)
-            noise = noise / noise.sum(axis=-1, keepdims=True)
-            noise_weights = self.noise_weights.numpy()
-            probs = (1. - noise_weights) * probs + noise_weights * noise
+            policy_noise = np.ones((1, 1, 4))
+            policy_noise = policy_noise / policy_noise.sum(axis=-1, keepdims=True)
+            noise_weights = self.noise_weights.numpy().astype(np.float)
+            probs = (1. - noise_weights) * probs + noise_weights * policy_noise
         # Score the dead geese
         dead_geese_mask = ~np.array(still_alive_list)
         # This doesn't work in Kaggle environment:
@@ -477,11 +477,14 @@ class Agent:
         ) - 1.
         agent_rankings_rescaled = 2. * agent_rankings / (n_geese - 1.) - 1.
 
+        value_noise = dead_geese_mask.astype(np.float).sum(axis=-1, keepdims=True) / (n_geese - 1.)
+        noise_weights = noise_weights.squeeze(-1)
         final_values = np.where(
             dead_geese_mask,
             agent_rankings_rescaled,
             values.numpy()
         )
+        final_values = (1. - noise_weights) * final_values + noise_weights * value_noise
         # Logits should be of shape (n_envs, n_geese, 4)
         # Values should be of shape (n_envs, n_geese, 1)
         return probs, np.expand_dims(final_values, axis=-1)
