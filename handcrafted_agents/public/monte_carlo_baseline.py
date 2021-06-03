@@ -185,6 +185,7 @@ def simulateMatches(observation, configuration, numMatches, depth):
         else:
             scores.append(rewards[observation.index] / mean)
 
+    """
     print('frame: ', frame)
     print('options: ', options)
     print('scores: ', scores)
@@ -194,6 +195,7 @@ def simulateMatches(observation, configuration, numMatches, depth):
     print('1: ', len(observation.geese[1]))
     print('2: ', len(observation.geese[2]))
     print('3: ', len(observation.geese[3]))
+    """
 
     return options[scores.index(max(scores))]
 

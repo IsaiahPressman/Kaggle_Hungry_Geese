@@ -2302,7 +2302,9 @@ class Agent:
                     ]
                     if len(my_best_action_idx.ravel()) == 1:
                         my_best_action_idx = int(my_best_action_idx.item())
+                        """
                         print('Stopping search early!', end=' ')
+                        """
                         break
                 improved_policy = new_improved_policy
                 n_iter += 1
@@ -2312,6 +2314,7 @@ class Agent:
         q_vals = root_node.q_vals
         # Greedily select best action
         selected_action = tuple(Action)[my_best_action_idx].name
+        """
         print(f'Step: {obs.step + 1}', end=' ')
         print(f'Index: {self.index}', end=' ')
         print(f'My initial policy: {print_array_one_line(initial_policy)}', end=' ')
@@ -2325,6 +2328,7 @@ class Agent:
         print(f'All policies: {print_array_one_line(final_policies)}', end=' ')
         print(f'All Q-values: {print_array_one_line(q_vals)}', end=' ')
         print()
+        """
         return selected_action
 
     def actor_critic_func(self, state):
