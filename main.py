@@ -97,7 +97,7 @@ OVERAGE_BUFFER: How much overage time to leave as a buffer for the steps after E
 C_PUCT = 1.
 DELTA = 0.08
 MIN_THRESHOLD_FOR_CONSIDERATION = 0.15
-MAX_SEARCH_ITER = 10
+MAX_SEARCH_ITER = 5
 RESET_SEARCH = True
 OVERAGE_BUFFER = 1.
 PER_ROUND_BATCHED_TIME_ALLOCATION = 0.9
@@ -233,7 +233,21 @@ class Agent:
     def __call__(self, obs: Observation, conf: Configuration) -> str:
         start_time = time.time()
         self.preprocess(obs, conf)
-        
+
+        noise_update_start_time = time.time()
+        if obs.step >= 1:
+            self.all_actions[
+                [obs.step - 1] * self.n_geese,
+                list(range(self.n_geese)),
+                [a.value - 1 for a in self.last_actions]
+            ] = 1.
+            update_mask = np.array([len(g) > 0 for g in obs.geese])
+            update_mask[self.index] = False
+            noise_weights_logging = self.update_noise_weights(obs.step, update_mask)
+        else:
+            noise_weights_logging = ''
+        noise_update_time = time.time() - noise_update_start_time
+
         search_start_time = time.time()
         env = make_from_state(obs, self.last_actions)
         csr = env.canonical_string_repr(include_food=self.search_tree.include_food)
@@ -245,26 +259,13 @@ class Agent:
                 if key.startswith(f'S: {obs.step - 1}') or (key.startswith(f'S: {obs.step}') and key != csr):
                     del self.search_tree.nodes[key]
         my_best_action_idx, root_node, stopped_early = self.run_search(obs, env)
+        search_time = time.time() - search_start_time
+
         final_policies = root_node.get_improved_policies(temp=1.)
         q_vals = root_node.q_vals
-        search_time = time.time() - search_start_time
-        
-        noise_update_start_time = time.time()
         self.all_policy_preds[obs.step] = torch.from_numpy(final_policies).to(torch.float32)
         self.all_action_masks[obs.step] = torch.from_numpy(root_node.available_actions_masks).to(torch.float32)
-        if obs.step >= 1:
-            self.all_actions[
-                [obs.step-1] * self.n_geese,
-                list(range(self.n_geese)),
-                [a.value-1 for a in self.last_actions]
-            ] = 1.
-            update_mask = root_node.geese_still_playing.copy()
-            update_mask[self.index] = False
-            noise_weights_logging = self.update_noise_weights(obs.step, update_mask)
-        else:
-            noise_weights_logging = ''
-        noise_update_time = time.time() - noise_update_start_time
-        
+
         # Greedily select best action
         selected_action = tuple(Action)[my_best_action_idx].name
         early_stopped_logging = 'Stopped search early!' if stopped_early else ''
