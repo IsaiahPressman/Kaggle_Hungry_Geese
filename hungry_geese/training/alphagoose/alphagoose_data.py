@@ -1,3 +1,5 @@
+import functools
+import itertools
 from kaggle_environments.envs.hungry_geese.hungry_geese import Action
 import numpy as np
 from pathlib import Path
@@ -195,8 +197,55 @@ class PretrainRandomReflect:
                 -1
             )
         else:
-            raise ValueError(f'Not yet a supported obs_type: {self.obs_type}')
+            raise NotImplementedError(f'Not yet a supported obs_type: {self.obs_type}')
         return state, actions, ranks_rescaled, head_locs, still_alive
+
+
+class PretrainChannelShuffle:
+    """
+    Given a tuple of (state, actions, ranks_rescaled, head_locs, still_alive) arrays, randomly shuffle the channels
+    pertaining to given geese, such that goose 1 may become goose 0.
+    NB: Technically, there may be a couple edge cases where the goose index matters, but these are overwhelmingly few
+    and far between.
+    """
+
+    def __init__(self, obs_type: ObsType):
+        self.obs_type = obs_type
+
+    def __call__(
+            self,
+            sample: Sequence[np.ndarray]
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        state, actions, ranks_rescaled, head_locs, still_alive = sample
+        n_players = actions.size
+        shuffled_player_idxs = np.random.permutation(n_players)
+        shuffled_channel_idxs = self.get_idxs(n_players, tuple(shuffled_player_idxs))
+
+        return (
+            state[shuffled_channel_idxs, :, :],
+            actions[shuffled_player_idxs],
+            ranks_rescaled[shuffled_player_idxs],
+            head_locs[shuffled_player_idxs],
+            still_alive[shuffled_player_idxs]
+        )
+
+    @functools.lru_cache()
+    def get_idxs(self, n_players: int, shuffled_player_idxs: Tuple) -> List[int]:
+        if self.obs_type == ObsType.COMBINED_GRADIENT_OBS_SMALL:
+            n = 2
+            pre_idxs = []
+            channel_idxs = [[i for i in range(p * n, p * n + n)] for p in range(n_players)]
+            post_idxs = [-3, -2, -1]
+        elif self.obs_type == ObsType.COMBINED_GRADIENT_OBS_LARGE:
+            n = 3
+            pre_idxs = []
+            channel_idxs = [[i for i in range(p * n, p * n + n)] for p in range(n_players)]
+            post_idxs = [-3, -2, -1]
+        else:
+            raise NotImplementedError(f'Not yet a supported obs_type: {self.obs_type}')
+
+        shuffled_channel_idxs = list(itertools.chain.from_iterable([channel_idxs[i] for i in shuffled_player_idxs]))
+        return pre_idxs + shuffled_channel_idxs + post_idxs
 
 
 class ToTensor:
