@@ -95,7 +95,7 @@ EXPECTED_END_STEP: Controls the time management of the agent
 OVERAGE_BUFFER: How much overage time to leave as a buffer for the steps after EXPECTED_END_STEP
 """
 C_PUCT = 1.
-DELTA = 0.08
+DELTA = 0.12
 MIN_THRESHOLD_FOR_CONSIDERATION = 0.15
 MAX_SEARCH_ITER = 5
 RESET_SEARCH = True
@@ -118,7 +118,7 @@ class Agent:
         self.index = obs.index
         self.n_geese = len(obs.geese)
 
-        obs_type = ge.ObsType.COMBINED_GRADIENT_OBS_SMALL
+        obs_type = ge.ObsType.COMBINED_GRADIENT_OBS_LARGE
         n_channels = 64
         activation = nn.ReLU
         normalize = False
@@ -305,7 +305,7 @@ class Agent:
         )
         initial_policy = root_node.initial_policies[self.index]
         improved_policy = root_node.get_improved_policies(temp=1.)[self.index]
-        actions_to_consider = improved_policy >= MIN_THRESHOLD_FOR_CONSIDERATION
+        actions_to_consider = initial_policy >= MIN_THRESHOLD_FOR_CONSIDERATION
         early_stop = False
         # Stop search if the following conditions are met
         if (
@@ -387,7 +387,7 @@ class Agent:
         all_steps_noise = torch.ones((1, 1, 4), dtype=torch.float32) * self.all_action_masks[:current_step]
         all_steps_noise = all_steps_noise / all_steps_noise.sum(dim=-1, keepdim=True)
         noise_grads = []
-        for i in range(N_ITER_NOISE_OPT):
+        for _ in range(N_ITER_NOISE_OPT):
             masked_noise_weights = self.noise_weights[:, update_mask]
             self.noise_opt.zero_grad()
             if UPDATE_NOISE_BASED_ON_ALL_STEPS:
