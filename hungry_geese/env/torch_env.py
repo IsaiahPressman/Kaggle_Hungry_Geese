@@ -4,7 +4,7 @@ import torch
 
 from ..config import N_PLAYERS
 from .goose_env import ObsType
-from ..utils import STATE_TYPE
+from ..utils import STATE_TYPE, torch_terminal_value_func
 
 ACTIONS_TUPLE = tuple(Action)
 
@@ -572,7 +572,8 @@ class TorchEnv:
             self.rewards
         )
 
-    def step(self, actions: torch.Tensor, update_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def step(self, actions: torch.Tensor, update_mask: Optional[torch.Tensor] = None,
+             get_reward_and_dead: bool = False):
         if update_mask is None:
             update_mask = torch.ones_like(self.dones, dtype=torch.bool)
         if update_mask.shape != self.dones.shape:
@@ -591,7 +592,16 @@ class TorchEnv:
         self._update_obs(update_mask)
         self._update_rewards(update_mask)
 
-        return self.obs
+        if get_reward_and_dead:
+            agent_rankings = torch_terminal_value_func(self.rewards)
+            returned_rewards = torch.where(
+                self.alive,
+                torch.zeros_like(agent_rankings),
+                agent_rankings
+            )
+            return self.obs, returned_rewards, ~self.alive
+        else:
+            return self.obs
 
     def generate_obs_dicts(self, selected_envs_mask: Optional[torch.Tensor] = None) -> List[STATE_TYPE]:
         return generate_obs_dicts(

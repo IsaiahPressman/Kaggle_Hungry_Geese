@@ -202,8 +202,7 @@ class SupervisedPretraining:
             result_masked = result.view(-1)[still_alive.view(-1)]
             value_loss = F.mse_loss(value_masked, result_masked, reduction=reduction)
 
-            probs_masked = F.softmax(logits_masked, dim=-1)
-            entropy_loss = torch.sum(probs_masked * torch.log(probs_masked), dim=-1)
+            entropy_loss = torch.sum(F.softmax(logits_masked, dim=-1) * F.log_softmax(logits_masked, dim=-1), dim=-1)
             if reduction == 'none':
                 pass
             elif reduction == 'mean':

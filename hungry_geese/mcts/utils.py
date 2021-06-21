@@ -6,7 +6,7 @@ from typing import *
 
 from ..env import goose_env as ge
 from ..nns.models import FullConvActorCriticNetwork
-from ..utils import STATE_TYPE
+from ..utils import STATE_TYPE, torch_rankdata_average
 
 
 def terminal_value_func(state: STATE_TYPE):
@@ -101,7 +101,7 @@ def torch_actor_critic_factory(model: FullConvActorCriticNetwork) -> Callable:
             probs = F.softmax(logits, dim=-1)
         # Score the dead geese
         dead_geese_mask = ~still_alive
-        agent_rankings = rankdata_average(rewards) - 1.
+        agent_rankings = torch_rankdata_average(rewards) - 1.
         agent_rankings_rescaled = 2. * agent_rankings / (n_geese - 1.) - 1.
 
         final_values = torch.where(
@@ -114,46 +114,3 @@ def torch_actor_critic_factory(model: FullConvActorCriticNetwork) -> Callable:
         return probs, final_values
 
     return torch_actor_critic_func
-
-
-def torch_terminal_value_func(rewards: torch.Tensor) -> torch.Tensor:
-    n_geese = rewards.shape[1]
-    agent_rankings = rankdata_average(rewards) - 1.
-    agent_rankings_rescaled = 2. * agent_rankings / (n_geese - 1.) - 1.
-    return agent_rankings_rescaled
-
-
-def rankdata_average(a: torch.Tensor) -> torch.Tensor:
-    assert a.ndim == 2
-    arr = a.clone()
-    sorter = torch.argsort(arr, dim=-1)
-    inv = torch.empty_like(sorter)
-    inv.scatter_(-1, sorter, torch.arange(sorter.shape[-1], device=arr.device).unsqueeze(0).expand_as(sorter))
-
-    arr = arr.gather(-1, sorter)
-    obs = torch.cat([
-        torch.ones((arr.shape[0], 1), dtype=torch.bool, device=arr.device),
-        arr[:, 1:] != arr[:, :-1]
-    ], dim=-1).to(torch.int64)
-    dense = obs.cumsum(dim=-1).gather(-1, inv)
-    """
-    We need to take the rowwise indices of the nonzero elements. However, the number of nonzero elements may vary from
-    row to row, so we pad the rows with additional elements so that the 1D nonzero indices can be reshaped to a matrix
-    of shape (n_rows, n_cols). Note that this will not affect the final result, as any additional nonzero elements
-    will not be gathered by the dense indices.
-    """
-    padding = torch.where(
-        (obs == 0).sum(dim=-1, keepdim=True) > torch.arange(arr.shape[-1], device=arr.device).unsqueeze(0),
-        torch.ones_like(obs),
-        torch.zeros_like(obs)
-    )
-    # cumulative counts of each unique value
-    count = torch.nonzero(torch.cat([obs, padding], dim=-1), as_tuple=True)[1].view(*arr.shape)
-    count = torch.cat([count, torch.zeros((arr.shape[0], 1), dtype=count.dtype, device=arr.device)], dim=-1)
-    count.scatter_(
-        -1,
-        (obs != 0).sum(dim=-1, keepdim=True),
-        torch.zeros((arr.shape[0], 1), dtype=count.dtype, device=arr.device) + arr.shape[-1]
-    )
-
-    return 0.5 * (count.gather(-1, dense) + count.gather(-1, dense - 1) + 1)
