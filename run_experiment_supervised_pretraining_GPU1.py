@@ -16,7 +16,7 @@ from hungry_geese.training.utils import FastDataLoader
 from hungry_geese.utils import format_experiment_name
 
 if __name__ == '__main__':
-    DEVICE = torch.device('cuda:0')
+    DEVICE = torch.device('cuda:1')
 
     obs_type = ge.ObsType.COMBINED_GRADIENT_OBS_LARGE
     n_channels = 64
@@ -28,14 +28,6 @@ if __name__ == '__main__':
         conv_block_kwargs=[
             dict(
                 in_channels=obs_type.get_obs_spec()[-3],
-                out_channels=n_channels,
-                kernel_size=3,
-                activation=activation,
-                normalize=normalize,
-                use_mhsa=False
-            ),
-            dict(
-                in_channels=n_channels,
                 out_channels=n_channels,
                 kernel_size=3,
                 activation=activation,
@@ -83,27 +75,29 @@ if __name__ == '__main__':
     model.load_state_dict(loaded_state_dicts)
     """
     model.to(device=DEVICE)
-    optimizer = torch.optim.SGD(
+    """
+        optimizer = torch.optim.SGD(
+            model.parameters(),
+            lr=0.05,
+            momentum=0.9,
+            weight_decay=1e-4
+        )
+        """
+    batch_size = 2048
+    optimizer = torch.optim.Adam(
         model.parameters(),
-        lr=0.05,
-        momentum=0.9,
-        weight_decay=1e-4
+        lr=0.001 * batch_size / 2048
     )
     # NB: lr_scheduler counts steps in batches, not epochs
-    batch_size = 4096
     lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(
         optimizer,
         # Stop reducing LR beyond 5e-4
-        milestones=[int(150000 * 512 * i / batch_size) for i in [1., 2.5]],
+        # milestones=[int(150000 * 512 * i / batch_size) for i in [1., 2.5]],
+        milestones=[],
         gamma=0.1
     )
 
-    if platform.system() == 'Windows':
-        dataset_loc = Path('episode_scraping/alphagoose_pretrain_data_1050/')
-        dataloader_class = FastDataLoader
-    else:
-        dataset_loc = Path('/home/isaiah/data/alphagoose_pretrain_data_1050/')
-        dataloader_class = DataLoader
+    dataset_loc = Path('/home/isaiah/data/alphagoose_pretrain_data_1125/')
     with open(dataset_loc / 'all_saved_episodes.txt', 'r') as f:
         all_episodes = [replay_name.rstrip() for replay_name in f.readlines()]
     train_episodes, test_episodes = train_test_split(np.array(all_episodes), test_size=0.05)
@@ -132,14 +126,14 @@ if __name__ == '__main__':
         shuffle=True,
         pin_memory=True
     )
-    train_dataloader = dataloader_class(train_dataset, num_workers=7, **dataloader_kwargs)
-    test_dataloader = dataloader_class(test_dataset, num_workers=7, **dataloader_kwargs)
+    train_dataloader = DataLoader(train_dataset, num_workers=6, **dataloader_kwargs)
+    test_dataloader = DataLoader(test_dataset, num_workers=6, **dataloader_kwargs)
 
     experiment_name = 'supervised_pretraining_' + format_experiment_name(obs_type,
                                                                          ge.RewardType.RANK_ON_DEATH,
                                                                          ge.ActionMasking.NONE,
                                                                          [n_channels],
-                                                                         model_kwargs['conv_block_kwargs']) + '_v1'
+                                                                         model_kwargs['conv_block_kwargs']) + '_v5'
     exp_folder = Path(f'runs/supervised_pretraining/active/{experiment_name}')
     train_alg = SupervisedPretraining(
         model=model,

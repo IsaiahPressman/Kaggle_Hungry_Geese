@@ -15,7 +15,7 @@ from hungry_geese.utils import format_experiment_name
 def main():
     device = torch.device('cuda:0')
 
-    obs_type = ge.ObsType.COMBINED_GRADIENT_OBS_LARGE
+    obs_type = ge.ObsType.COMBINED_GRADIENT_OBS_SMALL
     n_channels = 64
     activation = nn.ReLU
     normalize = False
@@ -79,13 +79,13 @@ def main():
 
     env_kwargs = dict(
         config=Configuration(kaggle_make('hungry_geese', debug=False).configuration),
-        n_envs=15_000,
+        n_envs=1_000,
         obs_type=obs_type,
         device=device,
     )
 
     mcts_kwargs = dict(
-        n_iter=200,
+        n_iter=100,
         c_puct=1.,
         add_noise=True,
         noise_val=2.,
@@ -103,8 +103,9 @@ def main():
         dataset_dir=dataset_dir,
         weights_dir=weights_dir,
         allow_resume=True,
-        max_saved_batches=50_000,
+        max_saved_batches=25_000,
         update_model_freq=10,
+        use_mixed_precision=False,
         env_kwargs=env_kwargs,
         model_kwargs=model_kwargs,
         mcts_kwargs=mcts_kwargs,

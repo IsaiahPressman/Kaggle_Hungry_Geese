@@ -12,7 +12,7 @@ from hungry_geese.utils import format_experiment_name
 if __name__ == '__main__':
     DEVICE = torch.device('cuda:1')
 
-    obs_type = ge.ObsType.COMBINED_GRADIENT_OBS_LARGE
+    obs_type = ge.ObsType.COMBINED_GRADIENT_OBS_SMALL
     n_channels = 64
     activation = nn.ReLU
     normalize = False
@@ -61,18 +61,18 @@ if __name__ == '__main__':
     )
     model = models.FullConvActorCriticNetwork(**model_kwargs)
     model.to(device=DEVICE)
-    optimizer = torch.optim.SGD(
+    optimizer = torch.optim.Adam(
         model.parameters(),
-        lr=0.05,
-        momentum=0.9,
+        #lr=0.05,
+        #momentum=0.9,
         #weight_decay=1e-4
     )
     batch_size = 2048
     # NB: lr_scheduler counts steps in batches, not epochs
     lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(
         optimizer,
-        milestones=[int(100000 * 512 * i / batch_size) for i in [3]],
-        #milestones=[],
+        #milestones=[int(100000 * 512 * i / batch_size) for i in [3]],
+        milestones=[],
         gamma=0.1
     )
     dataset_kwargs = dict(
@@ -109,7 +109,7 @@ if __name__ == '__main__':
         checkpoint_render_n_games=0,
 
         # min_saved_steps=10,
-        min_saved_steps=int(5e5),
+        # min_saved_steps=int(5e5),
         start_from_scratch=False,
     )
 
