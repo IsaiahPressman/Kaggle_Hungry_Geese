@@ -156,6 +156,22 @@ class Agent:
                     kernel_size=3,
                     activation=activation,
                     normalize=normalize,
+                    use_mhsa=False
+                ),
+                dict(
+                    in_channels=n_channels,
+                    out_channels=n_channels,
+                    kernel_size=3,
+                    activation=activation,
+                    normalize=normalize,
+                    use_mhsa=False
+                ),
+                dict(
+                    in_channels=n_channels,
+                    out_channels=n_channels,
+                    kernel_size=3,
+                    activation=activation,
+                    normalize=normalize,
                     use_mhsa=use_mhsa,
                     mhsa_heads=4,
                 ),
@@ -188,7 +204,7 @@ class Agent:
 
         self.search_tree = BasicMCTS(
             action_mask_func=ActionMasking.LETHAL.get_action_mask,
-            actor_critic_func=self.batch_actor_critic_func,
+            actor_critic_func=self.batch_actor_critic_func if BATCH_SIZE > 1 else self.actor_critic_func,
             terminal_value_func=terminal_value_func,
             c_puct=C_PUCT,
             virtual_loss=3.,
@@ -291,18 +307,25 @@ class Agent:
     def run_search(self, obs: Observation, env: LightweightEnv) -> Tuple[int, Node, bool]:
         remaining_overage_time = max(obs.remaining_overage_time - OVERAGE_BUFFER, 0.)
         search_start_time = time.time()
-        self.search_tree.run_batch_mcts(
-            env=env,
-            batch_size=BATCH_SIZE,
-            n_iter=10000,
-            max_time=PER_ROUND_BATCHED_TIME_ALLOCATION
-        )
-        root_node = self.search_tree.run_batch_mcts(
-            env=env,
-            batch_size=min(BATCH_SIZE, 2),
-            n_iter=10000,
-            max_time=max(0.93 - (time.time() - search_start_time), 0.)
-        )
+        if BATCH_SIZE > 1:
+            self.search_tree.run_batch_mcts(
+                env=env,
+                batch_size=BATCH_SIZE,
+                n_iter=10000,
+                max_time=PER_ROUND_BATCHED_TIME_ALLOCATION
+            )
+            root_node = self.search_tree.run_batch_mcts(
+                env=env,
+                batch_size=min(BATCH_SIZE, 2),
+                n_iter=10000,
+                max_time=max(0.93 - (time.time() - search_start_time), 0.)
+            )
+        else:
+            root_node = self.search_tree.run_mcts(
+                env=env,
+                n_iter=10000,
+                max_time=0.93
+            )
         initial_policy = root_node.initial_policies[self.index]
         improved_policy = root_node.get_improved_policies(temp=1.)[self.index]
         actions_to_consider = initial_policy >= MIN_THRESHOLD_FOR_CONSIDERATION
@@ -326,12 +349,19 @@ class Agent:
                 dynamic_max_iter = MAX_SEARCH_ITER
             n_iter = 0
             while n_iter < MAX_SEARCH_ITER and n_iter < dynamic_max_iter:
-                root_node = self.search_tree.run_batch_mcts(
-                    env=env,
-                    batch_size=BATCH_SIZE,
-                    n_iter=10000,
-                    max_time=min(0.5, remaining_overage_time - (time.time() - search_start_time))
-                )
+                if BATCH_SIZE > 1:
+                    root_node = self.search_tree.run_batch_mcts(
+                        env=env,
+                        batch_size=BATCH_SIZE,
+                        n_iter=10000,
+                        max_time=min(0.5, remaining_overage_time - (time.time() - search_start_time))
+                    )
+                else:
+                    root_node = self.search_tree.run_mcts(
+                        env=env,
+                        n_iter=10000,
+                        max_time=min(0.5, remaining_overage_time - (time.time() - search_start_time))
+                    )
                 new_improved_policy = root_node.get_improved_policies(temp=1.)[self.index]
                 promising_actions = (new_improved_policy > initial_policy) & actions_to_consider
                 if (
@@ -505,6 +535,9 @@ class Agent:
         # Logits should be of shape (n_envs, n_geese, 4)
         # Values should be of shape (n_envs, n_geese, 1)
         return probs, np.expand_dims(final_values, axis=-1)
+
+    def actor_critic_func(self, state: STATE_TYPE) -> Tuple[np.ndarray, np.ndarray]:
+        return self.batch_actor_critic_func([state])
 
     @property
     def noise_weights(self) -> torch.Tensor:
