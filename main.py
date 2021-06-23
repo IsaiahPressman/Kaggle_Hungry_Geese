@@ -97,7 +97,7 @@ OVERAGE_BUFFER: How much overage time to leave as a buffer for the steps after E
 C_PUCT = 1.
 DELTA = 0.12
 MIN_THRESHOLD_FOR_CONSIDERATION = 0.15
-MAX_SEARCH_ITER = 5
+MAX_SEARCH_ITER = 6
 RESET_SEARCH = True
 OVERAGE_BUFFER = 2.
 PER_ROUND_BATCHED_TIME_ALLOCATION = 0.9
@@ -119,7 +119,7 @@ class Agent:
         self.n_geese = len(obs.geese)
 
         obs_type = ge.ObsType.COMBINED_GRADIENT_OBS_LARGE
-        n_channels = 64
+        n_channels = 92
         activation = nn.ReLU
         normalize = False
         use_mhsa = False
@@ -128,22 +128,6 @@ class Agent:
             conv_block_kwargs=[
                 dict(
                     in_channels=obs_type.get_obs_spec()[-3],
-                    out_channels=n_channels,
-                    kernel_size=3,
-                    activation=activation,
-                    normalize=normalize,
-                    use_mhsa=False
-                ),
-                dict(
-                    in_channels=n_channels,
-                    out_channels=n_channels,
-                    kernel_size=3,
-                    activation=activation,
-                    normalize=normalize,
-                    use_mhsa=False
-                ),
-                dict(
-                    in_channels=n_channels,
                     out_channels=n_channels,
                     kernel_size=3,
                     activation=activation,
@@ -185,7 +169,7 @@ class Agent:
         try:
             self.model.load_state_dict(torch.load('/kaggle_simulations/agent/cp.pt'))
         except FileNotFoundError:
-            self.model.load_state_dict(torch.load(Path.home() / 'goose_agent/cp.pt'))
+            self.model.load_state_dict(torch.load(Path.home() / 'GitHub/Kaggle/Hungry_Geese/cp.pt'))
         self.model.eval()
         self.obs_type = obs_type
 
@@ -342,9 +326,9 @@ class Agent:
             my_best_action_idx = root_node.get_max_policy_actions()[self.index]
         else:
             if obs.step < 50:
-                dynamic_max_iter = 4
+                dynamic_max_iter = 2
             elif obs.step < 100:
-                dynamic_max_iter = 6
+                dynamic_max_iter = 4
             else:
                 dynamic_max_iter = MAX_SEARCH_ITER
             n_iter = 0
@@ -532,12 +516,13 @@ class Agent:
             values.numpy()
         )
         final_values = (1. - noise_weights) * final_values + noise_weights * value_noise
-        # Logits should be of shape (n_envs, n_geese, 4)
+        # Probs should be of shape (n_envs, n_geese, 4)
         # Values should be of shape (n_envs, n_geese, 1)
         return probs, np.expand_dims(final_values, axis=-1)
 
     def actor_critic_func(self, state: STATE_TYPE) -> Tuple[np.ndarray, np.ndarray]:
-        return self.batch_actor_critic_func([state])
+        probs, values = self.batch_actor_critic_func([state])
+        return probs.squeeze(0), values.squeeze(0)
 
     @property
     def noise_weights(self) -> torch.Tensor:
