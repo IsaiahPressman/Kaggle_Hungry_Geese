@@ -156,6 +156,22 @@ class Agent:
                     kernel_size=3,
                     activation=activation,
                     normalize=normalize,
+                    use_mhsa=False
+                ),
+                dict(
+                    in_channels=n_channels,
+                    out_channels=n_channels,
+                    kernel_size=3,
+                    activation=activation,
+                    normalize=normalize,
+                    use_mhsa=False
+                ),
+                dict(
+                    in_channels=n_channels,
+                    out_channels=n_channels,
+                    kernel_size=3,
+                    activation=activation,
+                    normalize=normalize,
                     use_mhsa=use_mhsa,
                     mhsa_heads=4,
                 ),
