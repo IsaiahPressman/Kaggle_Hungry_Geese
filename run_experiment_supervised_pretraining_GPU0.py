@@ -17,7 +17,7 @@ if __name__ == '__main__':
     DEVICE = torch.device('cuda:0')
 
     obs_type = ge.ObsType.COMBINED_GRADIENT_OBS_LARGE
-    n_channels = 64
+    n_channels = 92
     activation = nn.ReLU
     normalize = False
     use_mhsa = False
@@ -26,6 +26,22 @@ if __name__ == '__main__':
         conv_block_kwargs=[
             dict(
                 in_channels=obs_type.get_obs_spec()[-3],
+                out_channels=n_channels,
+                kernel_size=3,
+                activation=activation,
+                normalize=normalize,
+                use_mhsa=False
+            ),
+            dict(
+                in_channels=n_channels,
+                out_channels=n_channels,
+                kernel_size=3,
+                activation=activation,
+                normalize=normalize,
+                use_mhsa=False
+            ),
+            dict(
+                in_channels=n_channels,
                 out_channels=n_channels,
                 kernel_size=3,
                 activation=activation,
@@ -132,7 +148,7 @@ if __name__ == '__main__':
                                                                          ge.RewardType.RANK_ON_DEATH,
                                                                          ge.ActionMasking.NONE,
                                                                          [n_channels],
-                                                                         model_kwargs['conv_block_kwargs']) + '_v6'
+                                                                         model_kwargs['conv_block_kwargs']) + '_v11'
     exp_folder = Path(f'runs/supervised_pretraining/active/{experiment_name}')
     train_alg = SupervisedPretraining(
         model=model,

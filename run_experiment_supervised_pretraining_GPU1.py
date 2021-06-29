@@ -2,7 +2,6 @@ import numpy as np
 from pathlib import Path
 import shutil
 from sklearn.model_selection import train_test_split
-import platform
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
@@ -10,16 +9,15 @@ from torchvision import transforms
 
 from hungry_geese.nns import models, conv_blocks
 import hungry_geese.env.goose_env as ge
-from hungry_geese.training.alphagoose.alphagoose_data import AlphaGoosePretrainDataset, PretrainRandomReflect, ToTensor
+from hungry_geese.training.alphagoose import alphagoose_data
 from hungry_geese.training.alphagoose.supervised_pretraining import SupervisedPretraining
-from hungry_geese.training.utils import FastDataLoader
 from hungry_geese.utils import format_experiment_name
 
 if __name__ == '__main__':
     DEVICE = torch.device('cuda:1')
 
     obs_type = ge.ObsType.COMBINED_GRADIENT_OBS_LARGE
-    n_channels = 64
+    n_channels = 92
     activation = nn.ReLU
     normalize = False
     use_mhsa = False
@@ -97,25 +95,26 @@ if __name__ == '__main__':
         gamma=0.1
     )
 
-    dataset_loc = Path('/home/isaiah/data/alphagoose_pretrain_data_1125/')
+    dataset_loc = Path('/home/isaiah/data/alphagoose_pretrain_data_1100/')
     with open(dataset_loc / 'all_saved_episodes.txt', 'r') as f:
         all_episodes = [replay_name.rstrip() for replay_name in f.readlines()]
     train_episodes, test_episodes = train_test_split(np.array(all_episodes), test_size=0.05)
     train_episodes = set(train_episodes)
     test_episodes = set(test_episodes)
-    train_dataset = AlphaGoosePretrainDataset(
+    train_dataset = alphagoose_data.AlphaGoosePretrainDataset(
         dataset_loc,
         obs_type,
         transform=transforms.Compose([
-            PretrainRandomReflect(obs_type),
-            ToTensor()
+            alphagoose_data.PretrainRandomReflect(obs_type),
+            alphagoose_data.PretrainChannelShuffle(obs_type),
+            alphagoose_data.ToTensor()
         ]),
         include_episode=lambda x: x.stem in train_episodes
     )
-    test_dataset = AlphaGoosePretrainDataset(
+    test_dataset = alphagoose_data.AlphaGoosePretrainDataset(
         dataset_loc,
         obs_type,
-        transform=ToTensor(),
+        transform=alphagoose_data.ToTensor(),
         include_episode=lambda x: x.stem in test_episodes
     )
     print(f'Split {len(train_episodes) + len(test_episodes)} episodes into '
@@ -126,14 +125,14 @@ if __name__ == '__main__':
         shuffle=True,
         pin_memory=True
     )
-    train_dataloader = DataLoader(train_dataset, num_workers=6, **dataloader_kwargs)
-    test_dataloader = DataLoader(test_dataset, num_workers=6, **dataloader_kwargs)
+    train_dataloader = DataLoader(train_dataset, num_workers=14, **dataloader_kwargs)
+    test_dataloader = DataLoader(test_dataset, num_workers=14, **dataloader_kwargs)
 
     experiment_name = 'supervised_pretraining_' + format_experiment_name(obs_type,
                                                                          ge.RewardType.RANK_ON_DEATH,
                                                                          ge.ActionMasking.NONE,
                                                                          [n_channels],
-                                                                         model_kwargs['conv_block_kwargs']) + '_v5'
+                                                                         model_kwargs['conv_block_kwargs']) + '_v8'
     exp_folder = Path(f'runs/supervised_pretraining/active/{experiment_name}')
     train_alg = SupervisedPretraining(
         model=model,
