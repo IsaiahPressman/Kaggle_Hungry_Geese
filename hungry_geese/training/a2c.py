@@ -24,7 +24,7 @@ class A2C:
             self,
             model: FullConvActorCriticNetwork,
             optimizer: torch.optim,
-            lr_scheduler: torch.optim.lr_scheduler,
+            lr_scheduler: Optional[torch.optim.lr_scheduler],
             env: TorchEnv,
             policy_weight: float = 1.,
             value_weight: float = 1.,
@@ -109,6 +109,8 @@ class A2C:
                 step_start_time = time.time()
                 s, _, dead = self.env.reset(get_reward_and_dead=True)
                 available_actions_mask = ~self.env.get_illegal_action_masks()
+                if not self.use_action_masking:
+                    available_actions_mask = torch.ones_like(available_actions_mask)
                 a, (l, v) = self.model.sample_action(
                     states=s,
                     head_locs=self.env.head_locs,
@@ -183,9 +185,10 @@ class A2C:
                 if self.clip_grads is not None:
                     torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.clip_grads)
                 self.optimizer.step()
-            with warnings.catch_warnings():
-                warnings.filterwarnings('ignore', category=UserWarning)
-                self.lr_scheduler.step()
+            if self.lr_scheduler is not None:
+                with warnings.catch_warnings():
+                    warnings.filterwarnings('ignore', category=UserWarning)
+                    self.lr_scheduler.step()
 
             if self.batch_counter % self.checkpoint_freq == 0 and self.batch_counter != 0:
                 self.checkpoint()
