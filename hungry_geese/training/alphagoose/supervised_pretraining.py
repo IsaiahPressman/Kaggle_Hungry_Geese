@@ -29,7 +29,7 @@ class SupervisedPretraining:
             test_dataloader: DataLoader,
             policy_weight: float = 1.,
             value_weight: float = 1.,
-            entropy_weight: float = 0.05,
+            entropy_weight: float = 0.1,
             device: torch.device = torch.device('cuda'),
             use_mixed_precision: bool = True,
             grad_scaler: amp.grad_scaler = amp.GradScaler(),
@@ -260,7 +260,7 @@ class SupervisedPretraining:
                                        (time.time() - checkpoint_start_time),
                                        int(self.epoch_counter / self.checkpoint_freq))
 
-    def render_n_games(self, checkpoint_dir: Path):
+    def render_n_games(self, checkpoint_dir: Path) -> NoReturn:
         if self.checkpoint_render_n_games > 0:
             save_dir = checkpoint_dir / 'replays'
             save_dir.mkdir()

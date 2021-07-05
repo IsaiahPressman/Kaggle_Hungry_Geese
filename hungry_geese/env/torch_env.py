@@ -138,7 +138,7 @@ class TorchEnv:
 
         self.reset()
 
-    def reset(self) -> torch.Tensor:
+    def reset(self, get_reward_and_dead: bool = False):
         self.geese[self.dones] = 0
         self.geese_tensor[self.dones] = 0
         self.head_ptrs[self.dones] = 0
@@ -177,11 +177,21 @@ class TorchEnv:
 
         self._initialize_obs(self.dones)
         self.dones[:] = False
-        return self.obs
 
-    def force_reset(self) -> NoReturn:
+        if get_reward_and_dead:
+            agent_rankings = torch_terminal_value_func(self.rewards)
+            returned_rewards = torch.where(
+                self.alive,
+                torch.zeros_like(agent_rankings),
+                agent_rankings
+            )
+            return self.obs, returned_rewards, ~self.alive
+        else:
+            return self.obs
+
+    def force_reset(self, *args, **kwargs):
         self.dones[:] = True
-        self.reset()
+        return self.reset(*args, **kwargs)
 
     @property
     def heads(self) -> torch.Tensor:
@@ -211,7 +221,7 @@ class TorchEnv:
     def all_geese_tensor(self) -> torch.Tensor:
         return self.geese_tensor.sum(dim=1)
 
-    def get_illegal_action_masks(self, dtype: torch.dtype = torch.bool):
+    def get_illegal_action_masks(self, dtype: torch.dtype = torch.bool) -> torch.Tensor:
         action_masks = torch.ones((self.n_envs, self.n_geese, 4), dtype=dtype, device=self.device)
         action_masks.scatter_(
             -1,
