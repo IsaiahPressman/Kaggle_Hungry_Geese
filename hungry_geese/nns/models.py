@@ -18,6 +18,7 @@ class BasicActorCriticNetwork(nn.Module):
             value_shift: float = 0.
     ):
         super(BasicActorCriticNetwork, self).__init__()
+        raise NotImplementedError('Fix -inf masking')
         self.base = ResidualModel(conv_block_kwargs)
         if use_adaptive_avg_pool:
             self.prepare_for_fc = nn.AdaptiveAvgPool2d((1, 1))
@@ -173,7 +174,11 @@ class FullConvActorCriticNetwork(nn.Module):
         if self.cross_normalize_value:
             if n_geese != 4.:
                 raise RuntimeError('cross_normalize_value still needs to be implemented for n_geese != 4')
-            values.masked_fill_(~still_alive, float('-inf'))
+            values = values + torch.where(
+                still_alive,
+                torch.zeros_like(values),
+                torch.zeros_like(values) + float('-inf')
+            )
             win_probs = torch.softmax(values, dim=-1)
             remaining_rewards = torch.linspace(0., 1., n_geese, dtype=states.dtype, device=states.device)
             remaining_rewards_min = remaining_rewards[-still_alive.sum(dim=-1)].unsqueeze(-1)
@@ -219,17 +224,22 @@ class FullConvActorCriticNetwork(nn.Module):
             with torch.no_grad():
                 logits, values = self.forward(states, head_locs, still_alive)
         if available_actions_mask is not None:
-            logits.masked_fill_(~available_actions_mask, float('-inf'))
-        # In case all actions are masked, select one at random
-        probs = F.softmax(torch.where(
-            logits.isneginf().all(axis=-1, keepdim=True),
-            torch.zeros_like(logits),
-            logits
-        ), dim=-1)
-        m = distributions.Categorical(probs)
+            # In case all actions are masked, unmask all actions
+            available_actions_mask = torch.where(
+                (~available_actions_mask).all(dim=-1, keepdim=True),
+                torch.ones_like(available_actions_mask),
+                available_actions_mask
+            )
+            logits = logits + torch.where(
+                available_actions_mask,
+                torch.zeros_like(logits),
+                torch.zeros_like(logits) + float('-inf')
+            )
+        log_probs = F.log_softmax(logits, dim=-1)
+        m = distributions.Categorical(log_probs.exp())
         sampled_actions = m.sample()
         if train:
-            return sampled_actions, (logits, values)
+            return sampled_actions, (log_probs, values)
         else:
             return sampled_actions
 
@@ -257,6 +267,7 @@ class QModel(nn.Module):
             value_shift: float = 0.
     ):
         super(QModel, self).__init__()
+        raise NotImplementedError('Fix -inf masking')
         self.base = ResidualModel(conv_block_kwargs)
         self.dueling_q = dueling_q
         if use_adaptive_avg_pool:
@@ -318,6 +329,7 @@ class DeepQNetwork(nn.Module):
                  *args, **kwargs
                  ):
         super(DeepQNetwork, self).__init__()
+        raise NotImplementedError('Fix -inf masking')
 
         self.epsilon = epsilon
         self.softmax_exploration = softmax_exploration

@@ -24,7 +24,7 @@ class A2C:
             self,
             model: FullConvActorCriticNetwork,
             optimizer: torch.optim,
-            lr_scheduler: Optional[torch.optim.lr_scheduler],
+            lr_scheduler: Optional,
             env: TorchEnv,
             policy_weight: float = 1.,
             value_weight: float = 1.,
@@ -33,7 +33,7 @@ class A2C:
             use_mixed_precision: bool = True,
             grad_scaler: amp.grad_scaler = amp.GradScaler(),
             clip_grads: Optional[float] = 10.,
-            exp_folder: Path = Path('runs/a2c/TEMP'),
+            exp_folder: Path = Path('runs/A2C/TEMP'),
             checkpoint_freq: int = 10,
             checkpoint_render_n_games: int = 10,
     ):
@@ -79,7 +79,6 @@ class A2C:
             self.rendering_env_kwargs = None
 
         self.batch_counter = 0
-        self.train_step_counter = 0
         self.summary_writer = SummaryWriter(str(self.exp_folder))
 
         dummy_state = torch.zeros(self.env.obs_type.get_obs_spec()[1:])
@@ -98,107 +97,110 @@ class A2C:
         self.model.train()
         self.env.force_reset()
 
-        print(f'\nRunning main training loop for {n_batches} batches of {batch_len} steps each.')
-        for _ in tqdm.trange(n_batches):
-            print('TODO: Compute entropy loss')
-            batch_start_time = time.time()
-            # alive_buffer tracks whether an agent was alive to act in a given state
-            # dead_buffer tracks whether an agent dies after its action
-            a_buffer, r_buffer, l_buffer, v_buffer, alive_buffer, dead_buffer = [], [], [], [], [], []
-            for _ in range(batch_len):
-                step_start_time = time.time()
-                s, _, dead = self.env.reset(get_reward_and_dead=True)
-                available_actions_mask = ~self.env.get_illegal_action_masks()
-                if not self.use_action_masking:
-                    available_actions_mask = torch.ones_like(available_actions_mask)
-                a, (l, v) = self.model.sample_action(
-                    states=s,
+        print(f'\nRunning main training loop for {n_batches:,d} batches of {batch_len} steps each.')
+        for batch in tqdm.trange(n_batches):
+            with amp.autocast(enabled=self.use_mixed_precision):
+                batch_start_time = time.time()
+                # alive_buffer tracks whether an agent was alive to act in a given state
+                # dead_buffer tracks whether an agent dies after its action
+                a_buffer, r_buffer, l_buffer, v_buffer, alive_buffer, dead_buffer = [], [], [], [], [], []
+                for step in range(batch_len):
+                    s, _, dead = self.env.reset(get_reward_and_dead=True)
+                    available_actions_mask = self.env.get_illegal_action_masks()
+                    if not self.use_action_masking:
+                        available_actions_mask = torch.ones_like(available_actions_mask)
+                    a, (l, v) = self.model.sample_action(
+                        states=s.clone(),
+                        head_locs=self.env.head_locs,
+                        still_alive=~dead,
+                        available_actions_mask=available_actions_mask,
+                        train=True
+                    )
+                    # The dead tensor is modified in-place by the environment
+                    alive_buffer.append(~dead.clone())
+                    _, r, dead = self.env.step(a, get_reward_and_dead=True)
+                    a_buffer.append(a)
+                    r_buffer.append(r)
+                    l_buffer.append(l)
+                    v_buffer.append(v)
+                    # The dead tensor is modified in-place by the environment
+                    dead_buffer.append(dead.clone())
+                self.summary_writer.add_scalar('Time/batch_step_time_ms',
+                                               (time.time() - batch_start_time) * 1000.,
+                                               self.batch_counter)
+
+                a_tensor = torch.stack(a_buffer, dim=0)
+                l_tensor = torch.stack(l_buffer, dim=0)
+                v_tensor = torch.stack(v_buffer, dim=0)
+                alive_tensor = torch.stack(alive_buffer, dim=0)
+                train_start_time = time.time()
+                self.env.reset()
+                _, v_final = self.model(
+                    states=self.env.obs.clone(),
                     head_locs=self.env.head_locs,
-                    still_alive=~dead,
-                    available_actions_mask=available_actions_mask,
-                    train=True
+                    still_alive=self.env.alive,
                 )
-                # The dead tensor is modified in-place by the environment
-                alive_buffer.append(~dead.clone())
-                _, r, dead = self.env.step(a, get_reward_and_dead=True)
-                a_buffer.append(a)
-                r_buffer.append(r)
-                l_buffer.append(l)
-                v_buffer.append(v)
-                # The dead tensor is modified in-place by the environment
-                dead_buffer.append(dead.clone())
+                v_final = v_final.detach()
+                td_target = compute_td_target(v_final, r_buffer, alive_buffer, dead_buffer, gamma)
+                td_target_masked = td_target[alive_tensor]
+                value_masked = v_tensor[alive_tensor]
+                advantage = td_target_masked - value_masked
+                critic_loss = F.smooth_l1_loss(value_masked, td_target_masked)
+                weighted_critic_loss = critic_loss * self.value_weight
 
-                self.summary_writer.add_scalar('Time/step_time_ms',
-                                               (time.time() - step_start_time) * 1000.,
-                                               self.train_step_counter)
-                self.train_step_counter += 1
-            self.summary_writer.add_scalar('Time/batch_step_time_ms',
-                                           (time.time() - batch_start_time) * 1000.,
-                                           self.batch_counter)
+                log_probs_masked = l_tensor[alive_tensor]
+                log_probs = log_probs_masked.gather(-1, a_tensor[alive_tensor].unsqueeze(dim=-1))
+                actor_loss = -(log_probs * advantage.detach()).mean()
+                weighted_actor_loss = actor_loss * self.policy_weight
 
-            a_tensor = torch.stack(a_buffer, dim=0)
-            l_tensor = torch.stack(l_buffer, dim=0)
-            v_tensor = torch.stack(v_buffer, dim=0)
-            alive_tensor = torch.stack(alive_buffer, dim=0)
-            train_start_time = time.time()
-            _, v_final = self.model(
-                states=self.env.obs,
-                head_locs=self.env.head_locs,
-                still_alive=self.env.alive,
-            ).detach()
-            td_target = compute_td_target(v_final, r_buffer, dead_buffer, gamma)
-            td_target_masked = td_target[alive_tensor]
-            value_masked = v_tensor[alive_tensor]
-            advantage = td_target_masked - value_masked
-            critic_loss = F.smooth_l1_loss(value_masked, td_target_masked)
-            weighted_critic_loss = critic_loss * self.value_weight
+                # TODO deprecate: full_batch_size = log_probs_masked.shape[0]
+                log_probs_masked_zeroed = torch.where(
+                    log_probs_masked.detach().isneginf(),
+                    torch.zeros_like(log_probs_masked),
+                    log_probs_masked
+                )
+                entropy_loss = (F.softmax(log_probs_masked, dim=-1) * log_probs_masked_zeroed).sum(dim=-1).mean()
+                # TODO deprecate: entropy_loss = entropy_loss[~(entropy_loss.detach().isnan())].sum() / full_batch_size
+                weighted_entropy_loss = entropy_loss * self.entropy_weight
 
-            log_probs = l_tensor[alive_tensor].gather(-1, a_tensor[alive_tensor])
-            actor_loss = -(log_probs * advantage.detach()).mean()
-            weighted_actor_loss = actor_loss * self.policy_weight
+                total_loss = weighted_critic_loss + weighted_actor_loss + weighted_entropy_loss
+                self.log_batch({
+                    'actor_loss': actor_loss.detach().cpu().numpy().item(),
+                    'weighted_actor_loss': weighted_actor_loss.detach().cpu().numpy().item(),
+                    'critic_loss': critic_loss.detach().cpu().numpy().item(),
+                    'weighted_critic_loss': weighted_critic_loss.detach().cpu().numpy().item(),
+                    'entropy_loss': entropy_loss.detach().cpu().numpy().item(),
+                    'weighted_entropy_loss': weighted_entropy_loss.detach().cpu().numpy().item(),
+                    'total_loss': total_loss.detach().cpu().numpy().item(),
+                })
 
-            # TODO: Compute entropy loss in a stable fashion
-            entropy_loss = torch.zeros(1).to(self.env.device)
-            weighted_entropy_loss = entropy_loss * self.entropy_weight
+                self.optimizer.zero_grad()
+                if self.use_mixed_precision:
+                    self.grad_scaler.scale(total_loss).backward()
+                    if self.clip_grads is not None:
+                        self.grad_scaler.unscale_(self.optimizer)
+                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.clip_grads)
+                    self.grad_scaler.step(self.optimizer)
+                    self.grad_scaler.update()
+                else:
+                    total_loss.backward()
+                    if self.clip_grads is not None:
+                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.clip_grads)
+                    self.optimizer.step()
+                if self.lr_scheduler is not None:
+                    with warnings.catch_warnings():
+                        warnings.filterwarnings('ignore', category=UserWarning)
+                        self.lr_scheduler.step()
 
-            total_loss = weighted_critic_loss + weighted_actor_loss + weighted_entropy_loss
-            self.log_batch({
-                'actor_loss': actor_loss.detach().cpu().numpy().item(),
-                'weighted_actor_loss': weighted_actor_loss.detach().cpu().numpy().item(),
-                'critic_loss': critic_loss.detach().cpu().numpy().item(),
-                'weighted_critic_loss': weighted_critic_loss.detach().cpu().numpy().item(),
-                'entropy_loss': entropy_loss.detach().cpu().numpy().item(),
-                'weighted_entropy_loss': entropy_loss.detach().cpu().numpy().item(),
-                'total_loss': entropy_loss.detach().cpu().numpy().item(),
-            })
-
-            self.optimizer.zero_grad()
-            if self.use_mixed_precision:
-                self.grad_scaler.scale(total_loss).backward()
-                if self.clip_grads is not None:
-                    self.grad_scaler.unscale_(self.optimizer)
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.clip_grads)
-                self.grad_scaler.step(self.optimizer)
-                self.grad_scaler.update()
-            else:
-                total_loss.backward()
-                if self.clip_grads is not None:
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.clip_grads)
-                self.optimizer.step()
-            if self.lr_scheduler is not None:
-                with warnings.catch_warnings():
-                    warnings.filterwarnings('ignore', category=UserWarning)
-                    self.lr_scheduler.step()
-
-            if self.batch_counter % self.checkpoint_freq == 0 and self.batch_counter != 0:
-                self.checkpoint()
-            self.summary_writer.add_scalar('Time/batch_train_time_ms',
-                                           (time.time() - train_start_time) * 1000.,
-                                           self.batch_counter)
-            self.summary_writer.add_scalar('Time/batch_total_time_ms',
-                                           (time.time() - batch_start_time) * 1000.,
-                                           self.batch_counter)
-            self.batch_counter += 1
+                if self.batch_counter % self.checkpoint_freq == 0 and self.batch_counter != 0:
+                    self.checkpoint()
+                self.summary_writer.add_scalar('Time/batch_train_time_ms',
+                                               (time.time() - train_start_time) * 1000.,
+                                               self.batch_counter)
+                self.summary_writer.add_scalar('Time/batch_total_time_ms',
+                                               (time.time() - batch_start_time) * 1000.,
+                                               self.batch_counter)
+                self.batch_counter += 1
         self.save(self.exp_folder, finished=True)
 
     def log_batch(self, log_dict: Dict[str, float]) -> NoReturn:
@@ -279,16 +281,22 @@ class A2C:
 
 
 def compute_td_target(
-    v_final: torch.Tensor,
-    r_buffer: List[torch.Tensor],
-    dead_buffer: List[torch.Tensor],
-    gamma: float
+        v_final: torch.Tensor,
+        r_buffer: List[torch.Tensor],
+        alive_buffer: List[torch.Tensor],
+        dead_buffer: List[torch.Tensor],
+        gamma: float
 ) -> torch.Tensor:
     td_target = []
     v_next_s = v_final
 
-    for r, dead in zip(r_buffer[::-1], dead_buffer[::-1]):
+    for r, alive, dead in zip(r_buffer[::-1], alive_buffer[::-1], dead_buffer[::-1]):
         v_next_s = r + gamma * v_next_s * (~dead).float()
+        v_next_s = torch.where(
+            alive,
+            v_next_s,
+            torch.zeros_like(v_next_s)
+        )
         td_target.append(v_next_s)
 
-    return torch.cat(td_target[::-1])
+    return torch.stack(td_target[::-1], dim=0).detach()

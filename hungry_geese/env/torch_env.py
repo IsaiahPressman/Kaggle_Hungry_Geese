@@ -180,12 +180,13 @@ class TorchEnv:
 
         if get_reward_and_dead:
             agent_rankings = torch_terminal_value_func(self.rewards)
+            agent_dones = self.alive & ~self.dones.unsqueeze(-1)
             returned_rewards = torch.where(
-                self.alive,
+                agent_dones,
                 torch.zeros_like(agent_rankings),
                 agent_rankings
             )
-            return self.obs, returned_rewards, ~self.alive
+            return self.obs, returned_rewards, ~agent_dones
         else:
             return self.obs
 
@@ -604,12 +605,13 @@ class TorchEnv:
 
         if get_reward_and_dead:
             agent_rankings = torch_terminal_value_func(self.rewards)
+            agent_dones = self.alive & ~self.dones.unsqueeze(-1)
             returned_rewards = torch.where(
-                self.alive,
+                agent_dones,
                 torch.zeros_like(agent_rankings),
                 agent_rankings
             )
-            return self.obs, returned_rewards, ~self.alive
+            return self.obs, returned_rewards, ~agent_dones
         else:
             return self.obs
 
