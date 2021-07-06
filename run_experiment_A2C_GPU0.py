@@ -66,14 +66,14 @@ if __name__ == '__main__':
     optimizer = torch.optim.RMSprop(
         model.parameters(),
         lr=0.0003,
-        alpha=0.99,
+        alpha=0.9,
         weight_decay=1e-5,
     )
     # NB: lr_scheduler counts steps in batches, not epochs
     lr_scheduler = None
     env = TorchEnv(
         config=Configuration(kaggle_make('hungry_geese', debug=False).configuration),
-        n_envs=2048,
+        n_envs=1024,
         obs_type=obs_type,
         device=DEVICE,
     )
@@ -93,7 +93,7 @@ if __name__ == '__main__':
         env=env,
         policy_weight=1.,
         value_weight=0.5,
-        entropy_weight=5e-4,
+        entropy_weight=1e-4,
         use_action_masking=True,
         use_mixed_precision=True,
         clip_grads=10.,
@@ -107,7 +107,7 @@ if __name__ == '__main__':
     try:
         train_alg.train(
             n_batches=int(1e9),
-            batch_len=20,
+            batch_len=10,
             gamma=0.999
         )
     except KeyboardInterrupt:
