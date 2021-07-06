@@ -146,7 +146,8 @@ class TorchEnv:
         self.last_actions[self.dones] = 0
         self.lengths[self.dones] = 1
         self.rewards[self.dones] = 0
-        self.alive[self.dones] = 1
+        self.alive[self.dones] = True
+        self.ate_last_turn[self.dones] = False
         self.food_tensor[self.dones] = 0
         self.step_counters[self.dones] = 0
         self.obs[self.dones] = 0.
@@ -180,13 +181,13 @@ class TorchEnv:
 
         if get_reward_and_dead:
             agent_rankings = torch_terminal_value_func(self.rewards)
-            agent_dones = self.alive & ~self.dones.unsqueeze(-1)
+            agents_not_done = self.alive & ~self.dones.unsqueeze(-1)
             returned_rewards = torch.where(
-                agent_dones,
+                agents_not_done,
                 torch.zeros_like(agent_rankings),
                 agent_rankings
             )
-            return self.obs, returned_rewards, ~agent_dones
+            return self.obs, returned_rewards, ~agents_not_done
         else:
             return self.obs
 
@@ -605,13 +606,13 @@ class TorchEnv:
 
         if get_reward_and_dead:
             agent_rankings = torch_terminal_value_func(self.rewards)
-            agent_dones = self.alive & ~self.dones.unsqueeze(-1)
+            agents_not_done = self.alive & ~self.dones.unsqueeze(-1)
             returned_rewards = torch.where(
-                agent_dones,
+                agents_not_done,
                 torch.zeros_like(agent_rankings),
                 agent_rankings
             )
-            return self.obs, returned_rewards, ~agent_dones
+            return self.obs, returned_rewards, ~agents_not_done
         else:
             return self.obs
 
@@ -661,7 +662,8 @@ class TorchEnv:
         if include_info:
             out_str += (f'Step: {self.step_counters[env_idx].cpu().item()}\n'
                         f'Lengths: {[i.item() for i in (self.lengths[env_idx] * self.alive[env_idx]).cpu()]}\n'
-                        f'Rewards: {[i.item() for i in self.rewards[env_idx].cpu()]}\n\n')
+                        f'Rewards: {[i.item() for i in self.rewards[env_idx].cpu()]}\n'
+                        f'Last actions: {[ACTIONS_TUPLE[i.item()].name for i in self.last_actions[env_idx].cpu()]}\n\n')
         for row in range(self.n_rows):
             out_str += ' '.join(display_dict.get(cell.item(), '?') for cell in out_mat[row]) + '\n'
         return out_str
