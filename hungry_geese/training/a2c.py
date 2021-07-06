@@ -154,6 +154,9 @@ class A2C:
                         self.summary_writer.add_histogram(f'Results/{name}',
                                                           np.concatenate(value).ravel(),
                                                           self.batch_counter)
+                        self.summary_writer.add_scalar(f'Results/median_{name}',
+                                                       np.median(np.concatenate(value)).item(),
+                                                       self.batch_counter)
                         self.summary_writer.add_scalar(f'Results/mean_{name}',
                                                        np.concatenate(value).mean().item(),
                                                        self.batch_counter)
