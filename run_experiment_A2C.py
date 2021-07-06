@@ -71,7 +71,7 @@ if __name__ == '__main__':
     lr_scheduler = None
     env = TorchEnv(
         config=Configuration(kaggle_make('hungry_geese', debug=False).configuration),
-        n_envs=1024,
+        n_envs=2048,
         obs_type=obs_type,
         device=DEVICE,
     )
@@ -106,7 +106,7 @@ if __name__ == '__main__':
         # torch.autograd.set_detect_anomaly(True)
         train_alg.train(
             n_batches=int(1e9),
-            batch_len=50,
+            batch_len=20,
             gamma=0.99
         )
     except KeyboardInterrupt:
