@@ -155,8 +155,8 @@ class A2C:
                         self.summary_writer.add_scalar(f'Results/mean_{name}',
                                                        np.concatenate(value).mean().item(),
                                                        self.batch_counter)
-                self.summary_writer.add_scalar('Time/batch_step_time_ms',
-                                               (time.time() - batch_start_time) * 1000.,
+                self.summary_writer.add_scalar('Time/batch_step_time_s',
+                                               time.time() - batch_start_time,
                                                self.batch_counter)
 
                 a_tensor = torch.stack(a_buffer, dim=0)
@@ -220,11 +220,11 @@ class A2C:
                         warnings.filterwarnings('ignore', category=UserWarning)
                         self.lr_scheduler.step()
 
-                self.summary_writer.add_scalar('Time/batch_train_time_ms',
-                                               (time.time() - train_start_time) * 1000.,
+                self.summary_writer.add_scalar('Time/batch_train_time_s',
+                                               time.time() - train_start_time,
                                                self.batch_counter)
-                self.summary_writer.add_scalar('Time/batch_total_time_ms',
-                                               (time.time() - batch_start_time) * 1000.,
+                self.summary_writer.add_scalar('Time/batch_total_time_s',
+                                               time.time() - batch_start_time,
                                                self.batch_counter)
                 if self.batch_counter % self.checkpoint_freq == 0 and self.batch_counter != 0:
                     self.checkpoint()
