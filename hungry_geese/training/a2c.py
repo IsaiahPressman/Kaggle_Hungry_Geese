@@ -96,6 +96,7 @@ class A2C:
             )
 
     def train(self, n_batches, batch_len=50, gamma=0.99) -> NoReturn:
+        initial_start_time = time.time()
         self.model.train()
         self.env.force_reset()
 
@@ -161,6 +162,9 @@ class A2C:
                                                        np.concatenate(value).mean().item(),
                                                        self.batch_counter)
                 self.summary_writer.add_scalar('Results/total_games_played', self.game_counter, self.batch_counter)
+                self.summary_writer.add_scalar('Time/games_per_second',
+                                               self.game_counter / (time.time() - initial_start_time),
+                                               self.batch_counter)
                 self.summary_writer.add_scalar('Time/batch_step_time_s',
                                                time.time() - batch_start_time,
                                                self.batch_counter)
