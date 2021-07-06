@@ -1,5 +1,6 @@
 import base64
 from kaggle_environments import make
+import numpy as np
 from pathlib import Path
 import pickle
 import shutil
@@ -104,6 +105,7 @@ class A2C:
                 # alive_buffer tracks whether an agent was alive to act in a given state
                 # dead_buffer tracks whether an agent dies after its action
                 a_buffer, r_buffer, l_buffer, v_buffer, alive_buffer, dead_buffer = [], [], [], [], [], []
+                game_length_buffer, final_goose_length_buffer, winning_goose_length_buffer = [], [], []
                 for step in range(batch_len):
                     s, _, dead = self.env.reset(get_reward_and_dead=True)
                     available_actions_mask = self.env.get_illegal_action_masks()
@@ -125,13 +127,34 @@ class A2C:
                     v_buffer.append(v)
                     # The dead tensor is modified in-place by the environment
                     dead_buffer.append(dead.clone())
+                    # Logging
+                    if self.env.dones.any():
+                        game_length_buffer.append(self.env.step_counters[self.env.dones].view(-1).cpu().numpy())
+                        final_goose_lengths = self.env.rewards[self.env.dones] % (self.env.max_len + 1)
+                        final_goose_lengths = torch.maximum(final_goose_lengths, torch.ones_like(final_goose_lengths))
+                        final_goose_length_buffer.append(final_goose_lengths.view(-1).cpu().numpy())
+                        winning_geese_idxs = self.env.rewards[self.env.dones].argmax(dim=-1, keepdim=True)
+                        winning_goose_lengths = final_goose_lengths.gather(-1, winning_geese_idxs)
+                        winning_goose_length_buffer.append(winning_goose_lengths.view(-1).cpu().numpy())
                     """
-                    # Debugging:
+                    # Debugging
                     render_idx = -1
                     print(f'Ranking: {r.cpu()[render_idx].tolist()}')
                     print(f'Dead: {dead.cpu()[render_idx].tolist()}')
                     print(self.env.render_env(render_idx))
                     """
+                if len(game_length_buffer) > 0:
+                    for name, value in [
+                        ('game_length', game_length_buffer),
+                        ('final_goose_length', final_goose_length_buffer),
+                        ('winning_goose_length', winning_goose_length_buffer)
+                    ]:
+                        self.summary_writer.add_histogram(f'Results/{name}',
+                                                          np.concatenate(value).ravel(),
+                                                          self.batch_counter)
+                        self.summary_writer.add_scalar(f'Results/mean_{name}',
+                                                       np.concatenate(value).mean().item(),
+                                                       self.batch_counter)
                 self.summary_writer.add_scalar('Time/batch_step_time_ms',
                                                (time.time() - batch_start_time) * 1000.,
                                                self.batch_counter)
@@ -169,7 +192,7 @@ class A2C:
                 weighted_entropy_loss = entropy_loss * self.entropy_weight
 
                 total_loss = weighted_critic_loss + weighted_actor_loss + weighted_entropy_loss
-                self.log_batch({
+                self.log_batch_losses({
                     'actor_loss': actor_loss.detach().cpu().numpy().item(),
                     'weighted_actor_loss': weighted_actor_loss.detach().cpu().numpy().item(),
                     'critic_loss': critic_loss.detach().cpu().numpy().item(),
@@ -208,9 +231,9 @@ class A2C:
                 self.batch_counter += 1
         self.save(self.exp_folder, finished=True)
 
-    def log_batch(self, log_dict: Dict[str, float]) -> NoReturn:
+    def log_batch_losses(self, log_dict: Dict[str, float]) -> NoReturn:
         for key, val in log_dict.items():
-            self.summary_writer.add_scalar(f'Batch/{key}', val, self.batch_counter)
+            self.summary_writer.add_scalar(f'Loss/{key}', val, self.batch_counter)
 
     def checkpoint(self) -> NoReturn:
         checkpoint_start_time = time.time()
