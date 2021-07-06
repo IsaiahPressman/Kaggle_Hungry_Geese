@@ -12,10 +12,10 @@ from hungry_geese.training.a2c import A2C
 from hungry_geese.utils import format_experiment_name
 
 if __name__ == '__main__':
-    DEVICE = torch.device('cuda:0')
+    DEVICE = torch.device('cuda:1')
 
-    obs_type = ge.ObsType.COMBINED_GRADIENT_OBS_LARGE
-    n_channels = 92
+    obs_type = ge.ObsType.COMBINED_GRADIENT_OBS_SMALL
+    n_channels = 64
     activation = nn.ReLU
     normalize = False
     use_mhsa = False
@@ -65,13 +65,15 @@ if __name__ == '__main__':
     model.to(device=DEVICE)
     optimizer = torch.optim.RMSprop(
         model.parameters(),
-        lr=0.0003
+        lr=0.0003,
+        alpha=0.9,
+        weight_decay=1e-5,
     )
     # NB: lr_scheduler counts steps in batches, not epochs
     lr_scheduler = None
     env = TorchEnv(
         config=Configuration(kaggle_make('hungry_geese', debug=False).configuration),
-        n_envs=2048,
+        n_envs=1024,
         obs_type=obs_type,
         device=DEVICE,
     )
@@ -83,7 +85,7 @@ if __name__ == '__main__':
         [n_channels],
         model_kwargs['conv_block_kwargs']
     ) + '_v0'
-    exp_folder = Path(f'runs/A2C/active/{experiment_name}')
+    exp_folder = Path(f'runs/A2C/active/GPU1_{experiment_name}')
     train_alg = A2C(
         model=model,
         optimizer=optimizer,
@@ -95,7 +97,7 @@ if __name__ == '__main__':
         use_action_masking=True,
         use_mixed_precision=True,
         clip_grads=10.,
-        #TODO: exp_folder=exp_folder,
+        exp_folder=exp_folder,
         checkpoint_freq=100,
         checkpoint_render_n_games=5
     )
@@ -103,11 +105,10 @@ if __name__ == '__main__':
     shutil.copy(this_script, train_alg.exp_folder / f'_{this_script.name}')
 
     try:
-        # torch.autograd.set_detect_anomaly(True)
         train_alg.train(
             n_batches=int(1e9),
-            batch_len=20,
-            gamma=0.99
+            batch_len=10,
+            gamma=0.999
         )
     except KeyboardInterrupt:
         if train_alg.batch_counter > train_alg.checkpoint_freq:
