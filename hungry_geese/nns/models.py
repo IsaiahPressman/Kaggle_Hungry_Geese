@@ -130,7 +130,7 @@ class FullConvActorCriticNetwork(nn.Module):
         @param states: Tensor of shape (batch_size, n_channels, n_rows, n_cols) representing the board
         @param head_locs: Tensor of shape (batch_size, n_geese), containing the integer index locations of the goose
             heads whose actions/values should be returned
-        @param still_alive: Booleran tensor of shape (batch_size, n_geese), where True values indicate which geese are
+        @param still_alive: Boolean tensor of shape (batch_size, n_geese), where True values indicate which geese are
             still alive and taking actions
         @return (policy, value):
              policy_logits: Tensor of shape (batch_size, n_geese, 4), representing the action distribution per goose
@@ -181,7 +181,7 @@ class FullConvActorCriticNetwork(nn.Module):
             )
             win_probs = torch.softmax(values, dim=-1)
             remaining_rewards = torch.linspace(0., 1., n_geese, dtype=states.dtype, device=states.device)
-            remaining_rewards_min = remaining_rewards[-still_alive.sum(dim=-1)].unsqueeze(-1)
+            remaining_rewards_min = remaining_rewards[-(still_alive.sum(dim=-1))].unsqueeze(-1)
             remaining_rewards_var = 1. - remaining_rewards_min
             values = remaining_rewards_min + win_probs * remaining_rewards_var
             # TODO: This is a hacky solution - there should be a more elegant way to do this for any n_geese_remaining?
@@ -198,14 +198,14 @@ class FullConvActorCriticNetwork(nn.Module):
             # After the value multiplication, the winning goose may have a value > 1
             # This "excess" value is redistributed evenly among the other geese
             max_vals = values.max(dim=-1, keepdim=True)[0]
-            values = torch.where(
+            values = values + torch.where(
                 max_vals > 1.,
                 torch.where(
-                    values == max_vals,
-                    values - (max_vals - 1.),
-                    values + (max_vals - 1.) / (still_alive.sum(dim=-1, keepdim=True) - 1.)
+                    values.detach() == max_vals,
+                    -(max_vals - 1.),
+                    (max_vals - 1.) / (still_alive.sum(dim=-1, keepdim=True) - 1.)
                 ),
-                values
+                torch.zeros_like(values)
             )
             # Rescale values from the range [0., 1] to the range [-1., 1]
             return logits, 2. * values - 1.
