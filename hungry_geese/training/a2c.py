@@ -80,6 +80,7 @@ class A2C:
             self.rendering_env_kwargs = None
 
         self.batch_counter = 0
+        self.game_counter = 0
         self.summary_writer = SummaryWriter(str(self.exp_folder))
 
         dummy_state = torch.zeros(self.env.obs_type.get_obs_spec()[1:])
@@ -136,6 +137,7 @@ class A2C:
                         winning_geese_idxs = self.env.rewards[self.env.dones].argmax(dim=-1, keepdim=True)
                         winning_goose_lengths = final_goose_lengths.gather(-1, winning_geese_idxs)
                         winning_goose_length_buffer.append(winning_goose_lengths.view(-1).cpu().numpy())
+                        self.game_counter += self.env.dones.sum().item()
                     """
                     # Debugging
                     render_idx = -1
@@ -155,6 +157,7 @@ class A2C:
                         self.summary_writer.add_scalar(f'Results/mean_{name}',
                                                        np.concatenate(value).mean().item(),
                                                        self.batch_counter)
+                self.summary_writer.add_scalar('Results/total_games_played', self.game_counter, self.batch_counter)
                 self.summary_writer.add_scalar('Time/batch_step_time_s',
                                                time.time() - batch_start_time,
                                                self.batch_counter)
