@@ -160,14 +160,12 @@ class A2C:
                 actor_loss = -(log_probs * advantage.detach()).mean()
                 weighted_actor_loss = actor_loss * self.policy_weight
 
-                # TODO deprecate: full_batch_size = log_probs_masked.shape[0]
                 log_probs_masked_zeroed = torch.where(
                     log_probs_masked.detach().isneginf(),
                     torch.zeros_like(log_probs_masked),
                     log_probs_masked
                 )
                 entropy_loss = (F.softmax(log_probs_masked, dim=-1) * log_probs_masked_zeroed).sum(dim=-1).mean()
-                # TODO deprecate: entropy_loss = entropy_loss[~(entropy_loss.detach().isnan())].sum() / full_batch_size
                 weighted_entropy_loss = entropy_loss * self.entropy_weight
 
                 total_loss = weighted_critic_loss + weighted_actor_loss + weighted_entropy_loss
@@ -199,14 +197,14 @@ class A2C:
                         warnings.filterwarnings('ignore', category=UserWarning)
                         self.lr_scheduler.step()
 
-                if self.batch_counter % self.checkpoint_freq == 0 and self.batch_counter != 0:
-                    self.checkpoint()
                 self.summary_writer.add_scalar('Time/batch_train_time_ms',
                                                (time.time() - train_start_time) * 1000.,
                                                self.batch_counter)
                 self.summary_writer.add_scalar('Time/batch_total_time_ms',
                                                (time.time() - batch_start_time) * 1000.,
                                                self.batch_counter)
+                if self.batch_counter % self.checkpoint_freq == 0 and self.batch_counter != 0:
+                    self.checkpoint()
                 self.batch_counter += 1
         self.save(self.exp_folder, finished=True)
 
