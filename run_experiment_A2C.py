@@ -63,15 +63,15 @@ if __name__ == '__main__':
     )
     model = models.FullConvActorCriticNetwork(**model_kwargs)
     model.to(device=DEVICE)
-    optimizer = torch.optim.Adam(
+    optimizer = torch.optim.RMSprop(
         model.parameters(),
-        lr=0.001
+        lr=0.0003
     )
     # NB: lr_scheduler counts steps in batches, not epochs
     lr_scheduler = None
     env = TorchEnv(
         config=Configuration(kaggle_make('hungry_geese', debug=False).configuration),
-        n_envs=512,
+        n_envs=1024,
         obs_type=obs_type,
         device=DEVICE,
     )
@@ -91,7 +91,7 @@ if __name__ == '__main__':
         env=env,
         policy_weight=1.,
         value_weight=0.5,
-        entropy_weight=1e-4,
+        entropy_weight=5e-4,
         use_action_masking=True,
         use_mixed_precision=True,
         clip_grads=10.,
@@ -106,7 +106,7 @@ if __name__ == '__main__':
         # torch.autograd.set_detect_anomaly(True)
         train_alg.train(
             n_batches=int(1e9),
-            batch_len=25,
+            batch_len=50,
             gamma=0.99
         )
     except KeyboardInterrupt:
