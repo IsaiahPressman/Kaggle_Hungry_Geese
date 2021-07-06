@@ -125,6 +125,13 @@ class A2C:
                     v_buffer.append(v)
                     # The dead tensor is modified in-place by the environment
                     dead_buffer.append(dead.clone())
+                    """
+                    # Debugging:
+                    render_idx = -1
+                    print(f'Ranking: {r.cpu()[render_idx].tolist()}')
+                    print(f'Dead: {dead.cpu()[render_idx].tolist()}')
+                    print(self.env.render_env(render_idx))
+                    """
                 self.summary_writer.add_scalar('Time/batch_step_time_ms',
                                                (time.time() - batch_start_time) * 1000.,
                                                self.batch_counter)
@@ -134,11 +141,11 @@ class A2C:
                 v_tensor = torch.stack(v_buffer, dim=0)
                 alive_tensor = torch.stack(alive_buffer, dim=0)
                 train_start_time = time.time()
-                self.env.reset()
+                s, _, dead = self.env.reset(get_reward_and_dead=True)
                 _, v_final = self.model(
-                    states=self.env.obs.clone(),
+                    states=s.clone(),
                     head_locs=self.env.head_locs,
-                    still_alive=self.env.alive,
+                    still_alive=~dead,
                 )
                 v_final = v_final.detach()
                 td_target = compute_td_target(v_final, r_buffer, alive_buffer, dead_buffer, gamma)
@@ -149,7 +156,7 @@ class A2C:
                 weighted_critic_loss = critic_loss * self.value_weight
 
                 log_probs_masked = l_tensor[alive_tensor]
-                log_probs = log_probs_masked.gather(-1, a_tensor[alive_tensor].unsqueeze(dim=-1))
+                log_probs = log_probs_masked.gather(-1, a_tensor[alive_tensor].unsqueeze(dim=-1)).view(-1)
                 actor_loss = -(log_probs * advantage.detach()).mean()
                 weighted_actor_loss = actor_loss * self.policy_weight
 
@@ -243,7 +250,7 @@ class A2C:
                 available_actions_mask = torch.from_numpy(
                     info_dict['available_actions_mask']
                 ).to(device=self.env.device).view(-1, rendering_env.n_players, 4)
-                a = self.model.choose_best_action(
+                a = self.model.sample_action(
                     s.to(device=self.env.device).view(-1, *s_shape[-3:]),
                     head_locs=head_locs,
                     still_alive=still_alive,
