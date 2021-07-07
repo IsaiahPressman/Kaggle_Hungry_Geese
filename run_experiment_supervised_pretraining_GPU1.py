@@ -160,6 +160,5 @@ if __name__ == '__main__':
     try:
         train_alg.train(n_epochs=int(1e6))
     except KeyboardInterrupt:
-        if train_alg.epoch_counter > train_alg.checkpoint_freq:
-            print('KeyboardInterrupt: saving model')
-            train_alg.save(train_alg.exp_folder, finished=True)
+        print('KeyboardInterrupt: saving model')
+        train_alg.save(train_alg.exp_folder, finished=True)
