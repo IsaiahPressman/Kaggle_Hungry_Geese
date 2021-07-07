@@ -156,22 +156,6 @@ class Agent:
                     kernel_size=3,
                     activation=activation,
                     normalize=normalize,
-                    use_mhsa=False
-                ),
-                dict(
-                    in_channels=n_channels,
-                    out_channels=n_channels,
-                    kernel_size=3,
-                    activation=activation,
-                    normalize=normalize,
-                    use_mhsa=False
-                ),
-                dict(
-                    in_channels=n_channels,
-                    out_channels=n_channels,
-                    kernel_size=3,
-                    activation=activation,
-                    normalize=normalize,
                     use_mhsa=use_mhsa,
                     mhsa_heads=4,
                 ),
@@ -185,7 +169,10 @@ class Agent:
         try:
             self.model.load_state_dict(torch.load('/kaggle_simulations/agent/cp.pt'))
         except FileNotFoundError:
-            self.model.load_state_dict(torch.load(Path.home() / 'GitHub/Kaggle/Hungry_Geese/cp.pt'))
+            try:
+                self.model.load_state_dict(torch.load(Path.home() / 'GitHub/Kaggle/Hungry_Geese/cp.pt'))
+            except FileNotFoundError:
+                self.model.load_state_dict(torch.load(Path.home() / 'github_misc/Kaggle_Hungry_Geese/cp.pt'))
         self.model.eval()
         self.obs_type = obs_type
 
