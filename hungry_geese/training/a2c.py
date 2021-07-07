@@ -35,7 +35,7 @@ class A2C:
             grad_scaler: amp.grad_scaler = amp.GradScaler(),
             clip_grads: Optional[float] = 10.,
             exp_folder: Path = Path('runs/A2C/TEMP'),
-            checkpoint_freq: int = 10,
+            checkpoint_freq: float = 20.,
             checkpoint_render_n_games: int = 10,
     ):
         self.model = model
@@ -97,6 +97,7 @@ class A2C:
 
     def train(self, n_batches, batch_len=50, gamma=0.99) -> NoReturn:
         initial_start_time = time.time()
+        last_checkpoint_time = initial_start_time
         self.model.train()
         self.env.force_reset()
 
@@ -239,8 +240,9 @@ class A2C:
                 self.summary_writer.add_scalar('Time/batch_total_time_s',
                                                time.time() - batch_start_time,
                                                self.batch_counter)
-                if self.batch_counter % self.checkpoint_freq == 0 and self.batch_counter != 0:
+                if (time.time() - last_checkpoint_time) > self.checkpoint_freq * 60.:
                     self.checkpoint()
+                    last_checkpoint_time = time.time()
                 self.batch_counter += 1
         self.save(self.exp_folder, finished=True)
 

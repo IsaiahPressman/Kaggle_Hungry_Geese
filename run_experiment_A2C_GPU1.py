@@ -98,7 +98,7 @@ if __name__ == '__main__':
         use_mixed_precision=True,
         clip_grads=10.,
         exp_folder=exp_folder,
-        checkpoint_freq=500,
+        checkpoint_freq=20.,
         checkpoint_render_n_games=5
     )
     this_script = Path(__file__).absolute()
@@ -111,6 +111,5 @@ if __name__ == '__main__':
             gamma=0.999
         )
     except KeyboardInterrupt:
-        if train_alg.batch_counter > train_alg.checkpoint_freq:
-            print('KeyboardInterrupt: saving model')
-            train_alg.save(train_alg.exp_folder, finished=True)
+        print('KeyboardInterrupt: saving model')
+        train_alg.save(train_alg.exp_folder, finished=True)
