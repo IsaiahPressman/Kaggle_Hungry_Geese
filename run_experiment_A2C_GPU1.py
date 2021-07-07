@@ -14,8 +14,8 @@ from hungry_geese.utils import format_experiment_name
 if __name__ == '__main__':
     DEVICE = torch.device('cuda:1')
 
-    obs_type = ge.ObsType.COMBINED_GRADIENT_OBS_SMALL
-    n_channels = 64
+    obs_type = ge.ObsType.COMBINED_GRADIENT_OBS_LARGE
+    n_channels = 128
     activation = nn.ReLU
     normalize = False
     use_mhsa = False
