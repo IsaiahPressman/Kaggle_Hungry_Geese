@@ -257,7 +257,7 @@ class A2C:
                     param.detach().cpu().clone().numpy(),
                     self.batch_counter
                 )
-        checkpoint_dir = self.exp_folder / f'{self.batch_counter:04}'
+        checkpoint_dir = self.exp_folder / f'{self.batch_counter:06}'
         checkpoint_dir.mkdir()
         self.render_n_games(checkpoint_dir)
         self.save(checkpoint_dir)
