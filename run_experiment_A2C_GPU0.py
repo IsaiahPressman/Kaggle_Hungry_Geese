@@ -84,7 +84,7 @@ if __name__ == '__main__':
         ge.ActionMasking.OPPOSITE,
         [n_channels],
         model_kwargs['conv_block_kwargs']
-    ) + '_v0_continued'
+    ) + '_v0'
     exp_folder = Path(f'runs/A2C/active/GPU0_{experiment_name}')
     train_alg = A2C(
         model=model,
