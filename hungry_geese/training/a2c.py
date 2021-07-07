@@ -321,7 +321,8 @@ class A2C:
                     s = torch.from_numpy(s)
         self.model.train()
 
-    def save(self, save_dir: Path, finished: bool = False) -> NoReturn:
+    def save(self, save_dir: Union[str, Path], finished: bool = False) -> NoReturn:
+        save_dir = Path(save_dir)
         if finished:
             save_dir = save_dir / f'final_{self.batch_counter}'
             save_dir.mkdir()
@@ -336,14 +337,16 @@ class A2C:
         }, save_dir / 'full_cp.pt')
         self.model.to(device=self.env.device)
 
-    def load_checkpoint(self, load_dir: Path) -> NoReturn:
+    def load_checkpoint(self, load_dir: Union[str, Path]) -> NoReturn:
+        load_dir = Path(load_dir)
         checkpoint_dict = torch.load(load_dir / 'full_cp.pt')
         self.model.cpu()
         self.model.load_state_dict(checkpoint_dict['model'])
         self.model.to(device=self.env.device)
         self.batch_counter = checkpoint_dict['batch_counter']
         self.optimizer.load_state_dict(checkpoint_dict['optimizer'])
-        self.lr_scheduler.load_state_dict(checkpoint_dict['lr_scheduler'])
+        if self.lr_scheduler is not None:
+            self.lr_scheduler.load_state_dict(checkpoint_dict['lr_scheduler'])
         # Save the starting checkpoint params
         checkpoint_dir = self.exp_folder / f'initial_{self.batch_counter:06}'
         checkpoint_dir.mkdir()
