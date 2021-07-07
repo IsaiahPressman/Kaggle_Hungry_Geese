@@ -104,6 +104,8 @@ if __name__ == '__main__':
     this_script = Path(__file__).absolute()
     shutil.copy(this_script, train_alg.exp_folder / f'_{this_script.name}')
 
+    # Load a previous checkpoint
+    # train_alg.load_checkpoint(LOAD_DIR)
     try:
         train_alg.train(
             n_batches=int(1e9),
