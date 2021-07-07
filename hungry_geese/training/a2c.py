@@ -347,6 +347,8 @@ class A2C:
         self.optimizer.load_state_dict(checkpoint_dict['optimizer'])
         if self.lr_scheduler is not None:
             self.lr_scheduler.load_state_dict(checkpoint_dict['lr_scheduler'])
+        print(f'\nLoaded checkpoint from: {load_dir}')
+        
         # Save the starting checkpoint params
         checkpoint_dir = self.exp_folder / f'initial_{self.batch_counter:06}'
         checkpoint_dir.mkdir()
