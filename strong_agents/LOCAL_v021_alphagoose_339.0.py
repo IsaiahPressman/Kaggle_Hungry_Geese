@@ -2168,6 +2168,7 @@ OVERAGE_BUFFER = 1.
 
 assert C_PUCT >= 0.
 
+LE_MULT = 0.5
 
 class Agent:
     def __init__(self, obs: Observation, conf: Configuration):
@@ -2246,12 +2247,12 @@ class Agent:
                 if key.startswith(f'S: {obs.step - 1}') or (key.startswith(f'S: {obs.step}') and key != csr):
                     del self.search_tree.nodes[key]
         # TODO: More intelligently allocate overage time when search results are uncertain
-        remaining_overage_time = max(obs.remaining_overage_time - OVERAGE_BUFFER, 0.)
+        remaining_overage_time = max(obs.remaining_overage_time - OVERAGE_BUFFER, 0.) * LE_MULT
         search_start_time = time.time()
         root_node = self.search_tree.run_mcts(
             env=env,
             n_iter=10000,
-            max_time=0.9
+            max_time=0.9 * LE_MULT
         )
         initial_policy = root_node.initial_policies[self.index]
         improved_policy = root_node.get_improved_policies(temp=1.)[self.index]
@@ -2278,7 +2279,7 @@ class Agent:
                 root_node = self.search_tree.run_mcts(
                     env=env,
                     n_iter=10000,
-                    max_time=min(0.5, remaining_overage_time - (time.time() - search_start_time))
+                    max_time=min(0.5 * LE_MULT, remaining_overage_time - (time.time() - search_start_time))
                 )
                 new_improved_policy = root_node.get_improved_policies(temp=1.)[self.index]
                 promising_actions = (new_improved_policy > initial_policy) & actions_to_consider

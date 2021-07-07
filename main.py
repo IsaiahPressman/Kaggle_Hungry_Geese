@@ -103,6 +103,7 @@ OVERAGE_BUFFER = 2.
 PER_ROUND_BATCHED_TIME_ALLOCATION = 0.9
 BATCH_SIZE = 1
 
+# Dynamic noise for opponent actions
 NOISE_TYPE = 'linear'
 MIN_NOISE = 0.0
 MAX_NOISE = 0.75
@@ -111,6 +112,9 @@ N_ITER_NOISE_OPT = 4
 NOISE_OPT_LR = 1. / N_ITER_NOISE_OPT
 NOISE_OPT_MOMENTUM = 0.
 UPDATE_NOISE_BASED_ON_ALL_STEPS = True
+
+# Used for local evaluation
+LOCAL_EVAL_MULTIPLIER = 0.5
 
 
 class Agent:
@@ -168,7 +172,10 @@ class Agent:
         self.model = models.FullConvActorCriticNetwork(**model_kwargs)
         try:
             self.model.load_state_dict(torch.load('/kaggle_simulations/agent/cp.pt'))
+            self.le_mult = 1.
         except FileNotFoundError:
+            self.le_mult = LOCAL_EVAL_MULTIPLIER
+            print('Running local evaluation!')
             try:
                 self.model.load_state_dict(torch.load(Path.home() / 'GitHub/Kaggle/Hungry_Geese/cp.pt'))
             except FileNotFoundError:
@@ -292,26 +299,26 @@ class Agent:
         return selected_action
 
     def run_search(self, obs: Observation, env: LightweightEnv) -> Tuple[int, Node, bool]:
-        remaining_overage_time = max(obs.remaining_overage_time - OVERAGE_BUFFER, 0.)
+        remaining_overage_time = max(obs.remaining_overage_time - OVERAGE_BUFFER, 0.) * self.le_mult
         search_start_time = time.time()
         if BATCH_SIZE > 1:
             self.search_tree.run_batch_mcts(
                 env=env,
                 batch_size=BATCH_SIZE,
                 n_iter=10000,
-                max_time=PER_ROUND_BATCHED_TIME_ALLOCATION
+                max_time=PER_ROUND_BATCHED_TIME_ALLOCATION * self.le_mult
             )
             root_node = self.search_tree.run_batch_mcts(
                 env=env,
                 batch_size=min(BATCH_SIZE, 2),
                 n_iter=10000,
-                max_time=max(0.93 - (time.time() - search_start_time), 0.)
+                max_time=max(0.93 * self.le_mult - (time.time() - search_start_time), 0.)
             )
         else:
             root_node = self.search_tree.run_mcts(
                 env=env,
                 n_iter=10000,
-                max_time=0.93
+                max_time=0.93 * self.le_mult
             )
         initial_policy = root_node.initial_policies[self.index]
         improved_policy = root_node.get_improved_policies(temp=1.)[self.index]
@@ -341,13 +348,13 @@ class Agent:
                         env=env,
                         batch_size=BATCH_SIZE,
                         n_iter=10000,
-                        max_time=min(0.5, remaining_overage_time - (time.time() - search_start_time))
+                        max_time=min(0.5 * self.le_mult, remaining_overage_time - (time.time() - search_start_time))
                     )
                 else:
                     root_node = self.search_tree.run_mcts(
                         env=env,
                         n_iter=10000,
-                        max_time=min(0.5, remaining_overage_time - (time.time() - search_start_time))
+                        max_time=min(0.5 * self.le_mult, remaining_overage_time - (time.time() - search_start_time))
                     )
                 new_improved_policy = root_node.get_improved_policies(temp=1.)[self.index]
                 promising_actions = (new_improved_policy > initial_policy) & actions_to_consider
