@@ -1,8 +1,7 @@
-import base64
+from datetime import datetime
 from kaggle_environments import make
 import numpy as np
 from pathlib import Path
-import pickle
 import shutil
 import time
 import torch
@@ -11,6 +10,7 @@ from torch.cuda import amp
 from torch.utils.tensorboard import SummaryWriter
 from torch.jit import TracerWarning
 import tqdm
+import traceback
 from typing import *
 import warnings
 
@@ -95,7 +95,7 @@ class A2C:
                  still_alive.unsqueeze(0).to(device=self.env.device)]
             )
 
-    def train(self, n_batches, batch_len=50, gamma=0.99) -> NoReturn:
+    def train(self, n_batches: int, batch_len: int = 50, gamma: float = 0.99) -> NoReturn:
         initial_start_time = time.time()
         last_checkpoint_time = initial_start_time
         self.model.train()
@@ -106,145 +106,154 @@ class A2C:
               f'Running main training loop on {self.env.n_envs} environments for '
               f'{n_batches:,d} batches of {batch_len} steps each.')
         for batch in tqdm.trange(n_batches):
-            with amp.autocast(enabled=self.use_mixed_precision):
-                batch_start_time = time.time()
-                # alive_buffer tracks whether an agent was alive to act in a given state
-                # dead_buffer tracks whether an agent dies after its action
-                a_buffer, r_buffer, l_buffer, v_buffer, alive_buffer, dead_buffer = [], [], [], [], [], []
-                game_length_buffer, final_goose_length_buffer, winning_goose_length_buffer = [], [], []
-                for step in range(batch_len):
-                    s, _, dead = self.env.reset(get_reward_and_dead=True)
-                    available_actions_mask = self.env.get_illegal_action_masks()
-                    if not self.use_action_masking:
-                        available_actions_mask = torch.ones_like(available_actions_mask)
-                    a, (l, v) = self.model.sample_action(
-                        states=s.clone(),
-                        head_locs=self.env.head_locs,
-                        still_alive=~dead,
-                        available_actions_mask=available_actions_mask,
-                        train=True
-                    )
-                    # The dead tensor is modified in-place by the environment
-                    alive_buffer.append(~dead.clone())
-                    _, r, dead = self.env.step(a, get_reward_and_dead=True)
-                    a_buffer.append(a)
-                    r_buffer.append(r)
-                    l_buffer.append(l)
-                    v_buffer.append(v)
-                    # The dead tensor is modified in-place by the environment
-                    dead_buffer.append(dead.clone())
-                    # Logging
-                    if self.env.dones.any():
-                        game_length_buffer.append(self.env.step_counters[self.env.dones].view(-1).cpu().numpy())
-                        final_goose_lengths = self.env.rewards[self.env.dones] % (self.env.max_len + 1)
-                        final_goose_lengths = torch.maximum(final_goose_lengths, torch.ones_like(final_goose_lengths))
-                        final_goose_length_buffer.append(final_goose_lengths.view(-1).cpu().numpy())
-                        winning_geese_idxs = self.env.rewards[self.env.dones].argmax(dim=-1, keepdim=True)
-                        winning_goose_lengths = final_goose_lengths.gather(-1, winning_geese_idxs)
-                        winning_goose_length_buffer.append(winning_goose_lengths.view(-1).cpu().numpy())
-                        self.game_counter += self.env.dones.sum().item()
-                    """
-                    # Debugging
-                    render_idx = -1
-                    print(f'Ranking: {r.cpu()[render_idx].tolist()}')
-                    print(f'Dead: {dead.cpu()[render_idx].tolist()}')
-                    print(self.env.render_env(render_idx))
-                    """
-                if len(game_length_buffer) > 0:
-                    for name, value in [
-                        ('game_length', game_length_buffer),
-                        ('final_goose_length', final_goose_length_buffer),
-                        ('winning_goose_length', winning_goose_length_buffer)
-                    ]:
-                        self.summary_writer.add_histogram(f'Results/{name}',
-                                                          np.concatenate(value).ravel(),
-                                                          self.batch_counter)
-                        self.summary_writer.add_scalar(f'Results/median_{name}',
-                                                       np.median(np.concatenate(value)).item(),
-                                                       self.batch_counter)
-                        self.summary_writer.add_scalar(f'Results/mean_{name}',
-                                                       np.concatenate(value).mean().item(),
-                                                       self.batch_counter)
-                self.summary_writer.add_scalar('Results/total_games_played', self.game_counter, self.batch_counter)
-                self.summary_writer.add_scalar('Time/games_per_second',
-                                               self.game_counter / (time.time() - initial_start_time),
-                                               self.batch_counter)
-                self.summary_writer.add_scalar('Time/batch_step_time_s',
-                                               time.time() - batch_start_time,
-                                               self.batch_counter)
-
-                a_tensor = torch.stack(a_buffer, dim=0)
-                l_tensor = torch.stack(l_buffer, dim=0)
-                v_tensor = torch.stack(v_buffer, dim=0)
-                alive_tensor = torch.stack(alive_buffer, dim=0)
-                train_start_time = time.time()
-                s, _, dead = self.env.reset(get_reward_and_dead=True)
-                _, v_final = self.model(
-                    states=s.clone(),
-                    head_locs=self.env.head_locs,
-                    still_alive=~dead,
-                )
-                v_final = v_final.detach()
-                td_target = compute_td_target(v_final, r_buffer, alive_buffer, dead_buffer, gamma)
-                td_target_masked = td_target[alive_tensor]
-                value_masked = v_tensor[alive_tensor]
-                advantage = td_target_masked - value_masked
-                critic_loss = F.smooth_l1_loss(value_masked, td_target_masked)
-                weighted_critic_loss = critic_loss * self.value_weight
-
-                log_probs_masked = l_tensor[alive_tensor]
-                log_probs = log_probs_masked.gather(-1, a_tensor[alive_tensor].unsqueeze(dim=-1)).view(-1)
-                actor_loss = -(log_probs * advantage.detach()).mean()
-                weighted_actor_loss = actor_loss * self.policy_weight
-
-                log_probs_masked_zeroed = torch.where(
-                    log_probs_masked.detach().isneginf(),
-                    torch.zeros_like(log_probs_masked),
-                    log_probs_masked
-                )
-                entropy_loss = (F.softmax(log_probs_masked, dim=-1) * log_probs_masked_zeroed).sum(dim=-1).mean()
-                weighted_entropy_loss = entropy_loss * self.entropy_weight
-
-                total_loss = weighted_critic_loss + weighted_actor_loss + weighted_entropy_loss
-                self.log_batch_losses({
-                    'actor_loss': actor_loss.detach().cpu().numpy().item(),
-                    'weighted_actor_loss': weighted_actor_loss.detach().cpu().numpy().item(),
-                    'critic_loss': critic_loss.detach().cpu().numpy().item(),
-                    'weighted_critic_loss': weighted_critic_loss.detach().cpu().numpy().item(),
-                    'entropy_loss': entropy_loss.detach().cpu().numpy().item(),
-                    'weighted_entropy_loss': weighted_entropy_loss.detach().cpu().numpy().item(),
-                    'total_loss': total_loss.detach().cpu().numpy().item(),
-                })
-
-                self.optimizer.zero_grad()
-                if self.use_mixed_precision:
-                    self.grad_scaler.scale(total_loss).backward()
-                    if self.clip_grads is not None:
-                        self.grad_scaler.unscale_(self.optimizer)
-                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.clip_grads)
-                    self.grad_scaler.step(self.optimizer)
-                    self.grad_scaler.update()
-                else:
-                    total_loss.backward()
-                    if self.clip_grads is not None:
-                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.clip_grads)
-                    self.optimizer.step()
-                if self.lr_scheduler is not None:
-                    with warnings.catch_warnings():
-                        warnings.filterwarnings('ignore', category=UserWarning)
-                        self.lr_scheduler.step()
-
-                self.summary_writer.add_scalar('Time/batch_train_time_s',
-                                               time.time() - train_start_time,
-                                               self.batch_counter)
-                self.summary_writer.add_scalar('Time/batch_total_time_s',
-                                               time.time() - batch_start_time,
-                                               self.batch_counter)
-                if time.time() - last_checkpoint_time > self.checkpoint_freq * 60.:
-                    self.checkpoint()
-                    last_checkpoint_time = time.time()
-                self.batch_counter += 1
+            try:
+                with amp.autocast(enabled=self.use_mixed_precision):
+                    self._train_on_batch(batch_len=batch_len, gamma=gamma)
+            except Exception:
+                with open(self.exp_folder / 'errors.log', 'a') as f:
+                    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    f.write(f'{timestamp}\n{traceback.format_exc()}\n\n')
+                self.env.force_reset()
+            if time.time() - last_checkpoint_time > self.checkpoint_freq * 60.:
+                self.checkpoint()
+                last_checkpoint_time = time.time()
+            self.summary_writer.add_scalar('Time/games_per_second',
+                                           self.game_counter / (time.time() - initial_start_time),
+                                           self.batch_counter)
+            self.batch_counter += 1
         self.save(self.exp_folder, finished=True)
+
+    def _train_on_batch(self, batch_len: int, gamma: float) -> NoReturn:
+        batch_start_time = time.time()
+        # alive_buffer tracks whether an agent was alive to act in a given state
+        # dead_buffer tracks whether an agent dies after its action
+        a_buffer, r_buffer, l_buffer, v_buffer, alive_buffer, dead_buffer = [], [], [], [], [], []
+        game_length_buffer, final_goose_length_buffer, winning_goose_length_buffer = [], [], []
+        for step in range(batch_len):
+            s, _, dead = self.env.reset(get_reward_and_dead=True)
+            available_actions_mask = self.env.get_illegal_action_masks()
+            if not self.use_action_masking:
+                available_actions_mask = torch.ones_like(available_actions_mask)
+            a, (l, v) = self.model.sample_action(
+                states=s.clone(),
+                head_locs=self.env.head_locs,
+                still_alive=~dead,
+                available_actions_mask=available_actions_mask,
+                train=True
+            )
+            # The dead tensor is modified in-place by the environment
+            alive_buffer.append(~dead.clone())
+            _, r, dead = self.env.step(a, get_reward_and_dead=True)
+            a_buffer.append(a)
+            r_buffer.append(r)
+            l_buffer.append(l)
+            v_buffer.append(v)
+            # The dead tensor is modified in-place by the environment
+            dead_buffer.append(dead.clone())
+            # Logging
+            if self.env.dones.any():
+                game_length_buffer.append(self.env.step_counters[self.env.dones].view(-1).cpu().numpy())
+                final_goose_lengths = self.env.rewards[self.env.dones] % (self.env.max_len + 1)
+                final_goose_lengths = torch.maximum(final_goose_lengths, torch.ones_like(final_goose_lengths))
+                final_goose_length_buffer.append(final_goose_lengths.view(-1).cpu().numpy())
+                winning_geese_idxs = self.env.rewards[self.env.dones].argmax(dim=-1, keepdim=True)
+                winning_goose_lengths = final_goose_lengths.gather(-1, winning_geese_idxs)
+                winning_goose_length_buffer.append(winning_goose_lengths.view(-1).cpu().numpy())
+                self.game_counter += self.env.dones.sum().item()
+            """
+            # Debugging
+            render_idx = -1
+            print(f'Ranking: {r.cpu()[render_idx].tolist()}')
+            print(f'Dead: {dead.cpu()[render_idx].tolist()}')
+            print(self.env.render_env(render_idx))
+            """
+        if len(game_length_buffer) > 0:
+            for name, value in [
+                ('game_length', game_length_buffer),
+                ('final_goose_length', final_goose_length_buffer),
+                ('winning_goose_length', winning_goose_length_buffer)
+            ]:
+                self.summary_writer.add_histogram(f'Results/{name}',
+                                                  np.concatenate(value).ravel(),
+                                                  self.batch_counter)
+                self.summary_writer.add_scalar(f'Results/median_{name}',
+                                               np.median(np.concatenate(value)).item(),
+                                               self.batch_counter)
+                self.summary_writer.add_scalar(f'Results/mean_{name}',
+                                               np.concatenate(value).mean().item(),
+                                               self.batch_counter)
+        self.summary_writer.add_scalar('Results/total_games_played', self.game_counter, self.batch_counter)
+        self.summary_writer.add_scalar('Time/batch_step_time_s',
+                                       time.time() - batch_start_time,
+                                       self.batch_counter)
+
+        a_tensor = torch.stack(a_buffer, dim=0)
+        l_tensor = torch.stack(l_buffer, dim=0)
+        v_tensor = torch.stack(v_buffer, dim=0)
+        alive_tensor = torch.stack(alive_buffer, dim=0)
+        train_start_time = time.time()
+        s, _, dead = self.env.reset(get_reward_and_dead=True)
+        _, v_final = self.model(
+            states=s.clone(),
+            head_locs=self.env.head_locs,
+            still_alive=~dead,
+        )
+        v_final = v_final.detach()
+        td_target = compute_td_target(v_final, r_buffer, alive_buffer, dead_buffer, gamma)
+        td_target_masked = td_target[alive_tensor]
+        value_masked = v_tensor[alive_tensor]
+        advantage = td_target_masked - value_masked
+        critic_loss = F.smooth_l1_loss(value_masked, td_target_masked)
+        weighted_critic_loss = critic_loss * self.value_weight
+
+        log_probs_masked = l_tensor[alive_tensor]
+        log_probs = log_probs_masked.gather(-1, a_tensor[alive_tensor].unsqueeze(dim=-1)).view(-1)
+        actor_loss = -(log_probs * advantage.detach()).mean()
+        weighted_actor_loss = actor_loss * self.policy_weight
+
+        log_probs_masked_zeroed = torch.where(
+            log_probs_masked.detach().isneginf(),
+            torch.zeros_like(log_probs_masked),
+            log_probs_masked
+        )
+        entropy_loss = (F.softmax(log_probs_masked, dim=-1) * log_probs_masked_zeroed).sum(dim=-1).mean()
+        weighted_entropy_loss = entropy_loss * self.entropy_weight
+
+        total_loss = weighted_critic_loss + weighted_actor_loss + weighted_entropy_loss
+        self.log_batch_losses({
+            'actor_loss': actor_loss.detach().cpu().numpy().item(),
+            'weighted_actor_loss': weighted_actor_loss.detach().cpu().numpy().item(),
+            'critic_loss': critic_loss.detach().cpu().numpy().item(),
+            'weighted_critic_loss': weighted_critic_loss.detach().cpu().numpy().item(),
+            'entropy_loss': entropy_loss.detach().cpu().numpy().item(),
+            'weighted_entropy_loss': weighted_entropy_loss.detach().cpu().numpy().item(),
+            'total_loss': total_loss.detach().cpu().numpy().item(),
+        })
+
+        self.optimizer.zero_grad()
+        if self.use_mixed_precision:
+            self.grad_scaler.scale(total_loss).backward()
+            if self.clip_grads is not None:
+                self.grad_scaler.unscale_(self.optimizer)
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.clip_grads)
+            self.grad_scaler.step(self.optimizer)
+            self.grad_scaler.update()
+        else:
+            total_loss.backward()
+            if self.clip_grads is not None:
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.clip_grads)
+            self.optimizer.step()
+        if self.lr_scheduler is not None:
+            with warnings.catch_warnings():
+                warnings.filterwarnings('ignore', category=UserWarning)
+                self.lr_scheduler.step()
+
+        self.summary_writer.add_scalar('Time/batch_train_time_s',
+                                       time.time() - train_start_time,
+                                       self.batch_counter)
+        self.summary_writer.add_scalar('Time/batch_total_time_s',
+                                       time.time() - batch_start_time,
+                                       self.batch_counter)
 
     def log_batch_losses(self, log_dict: Dict[str, float]) -> NoReturn:
         for key, val in log_dict.items():
@@ -268,6 +277,7 @@ class A2C:
                                        int(self.batch_counter / self.checkpoint_freq))
 
     def render_n_games(self, checkpoint_dir: Path) -> NoReturn:
+        self.model.eval()
         if self.checkpoint_render_n_games > 0:
             save_dir = checkpoint_dir / 'replays'
             save_dir.mkdir()
@@ -309,18 +319,20 @@ class A2C:
                                 break
                     s, _, _, info_dict = rendering_env.soft_reset()
                     s = torch.from_numpy(s)
+        self.model.train()
 
     def save(self, save_dir: Path, finished: bool = False) -> NoReturn:
         if finished:
             save_dir = save_dir / f'final_{self.batch_counter}'
             save_dir.mkdir()
-        # Save model params as .txt and .pt
+        # Save model params as cp.pt and model + optimizer params as full_cp.pt
         self.model.cpu()
-        state_dict_bytes = pickle.dumps(self.model.state_dict())
-        serialized_string = base64.b64encode(state_dict_bytes)
-        with open(save_dir / 'cp.txt', 'w') as f:
-            f.write(str(serialized_string))
         torch.save(self.model.state_dict(), save_dir / 'cp.pt')
+        torch.save({
+            'batch_counter': self.batch_counter,
+            'model_state_dict': self.model.state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict()
+        }, save_dir / 'full_cp.pt')
         self.model.to(device=self.env.device)
 
 
