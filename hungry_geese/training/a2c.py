@@ -101,7 +101,7 @@ class A2C:
         self.env.force_reset()
 
         n_trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
-        print(f'Training model with {n_trainable_params:,d} parameters.\n'
+        print(f'\nTraining model with {n_trainable_params:,d} parameters.\n'
               f'Running main training loop on {self.env.n_envs} environments for {n_batches:,d}'
               f'batches of {batch_len} steps each.')
         for batch in tqdm.trange(n_batches):
