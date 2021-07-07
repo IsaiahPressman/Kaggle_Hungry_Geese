@@ -274,7 +274,9 @@ class TorchEnv:
         offsets = self.move_to_offset[actions]
         new_heads = self._wrap(self.heads + offsets)
         # Check for illegal actions
-        illegal_actions = ((self.last_actions - actions).abs() == 2) & update_geese & (self.step_counters.unsqueeze(-1) > 1)
+        illegal_actions = (((self.last_actions - actions).abs() == 2) &
+                           update_geese &
+                           (self.step_counters.unsqueeze(-1) > 1))
         # Update last action
         self.last_actions[update_mask] = torch.where(
             self.alive[update_mask],
@@ -378,10 +380,13 @@ class TorchEnv:
     def _replenish_food(self, update_mask: torch.Tensor) -> NoReturn:
         all_geese_cached = self.all_geese_tensor
         food_weights = 1. - (all_geese_cached + self.food_tensor).view(self.n_envs, -1)[update_mask]
+        # Ensure that if there are no available food locations, an error is not thrown
+        food_weights[food_weights.sum(dim=-1) == 0] = 1.
         food_locs = torch.multinomial(
             food_weights,
             self.n_food
         ).view(-1)
+        # Make sure to only put food in environments according to the number of food missing from that env
         n_food_needed = self.n_food - self.food_tensor.view(self.n_envs, -1)[update_mask].sum(dim=-1, keepdims=True)
         spots_available = self.n_rows * self.n_cols - (all_geese_cached +
                                                        self.food_tensor
