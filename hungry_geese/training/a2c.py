@@ -240,7 +240,7 @@ class A2C:
                 self.summary_writer.add_scalar('Time/batch_total_time_s',
                                                time.time() - batch_start_time,
                                                self.batch_counter)
-                if (time.time() - last_checkpoint_time) > self.checkpoint_freq * 60.:
+                if time.time() - last_checkpoint_time > self.checkpoint_freq * 60.:
                     self.checkpoint()
                     last_checkpoint_time = time.time()
                 self.batch_counter += 1

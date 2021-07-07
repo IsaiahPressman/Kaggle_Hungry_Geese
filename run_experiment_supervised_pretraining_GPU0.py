@@ -163,7 +163,7 @@ if __name__ == '__main__':
         use_mixed_precision=True,
         exp_folder=exp_folder,
         clip_grads=10.,
-        checkpoint_freq=10,
+        checkpoint_freq=20.,
         checkpoint_render_n_games=5
     )
     this_script = Path(__file__).absolute()

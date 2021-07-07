@@ -35,7 +35,7 @@ class SupervisedPretraining:
             grad_scaler: amp.grad_scaler = amp.GradScaler(),
             clip_grads: Optional[float] = 10.,
             exp_folder: Path = Path('runs/supervised_pretraining/TEMP'),
-            checkpoint_freq: int = 10,
+            checkpoint_freq: float = 20.,
             checkpoint_render_n_games: int = 10
     ):
         self.model = model
@@ -96,6 +96,7 @@ class SupervisedPretraining:
             )
 
     def train(self, n_epochs: int) -> NoReturn:
+        last_checkpoint_time = time.time()
         for epoch in range(n_epochs):
             epoch_start_time = time.time()
             self.model.train()
@@ -163,8 +164,9 @@ class SupervisedPretraining:
                 for key, metric in test_metrics.items():
                     test_metrics[key] = metric / n_test_samples
             self.log_test(test_metrics)
-            if self.epoch_counter % self.checkpoint_freq == 0 and self.epoch_counter > 0:
+            if time.time() - last_checkpoint_time > self.checkpoint_freq * 60.:
                 self.checkpoint()
+                last_checkpoint_time = time.time()
             epoch_time = time.time() - epoch_start_time
             self.summary_writer.add_scalar('Time/epoch_time_minutes',
                                            epoch_time / 60.,
