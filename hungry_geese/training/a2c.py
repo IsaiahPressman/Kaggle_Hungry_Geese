@@ -330,8 +330,9 @@ class A2C:
         torch.save(self.model.state_dict(), save_dir / 'cp.pt')
         torch.save({
             'batch_counter': self.batch_counter,
-            'model_state_dict': self.model.state_dict(),
-            'optimizer_state_dict': self.optimizer.state_dict()
+            'model': self.model.state_dict(),
+            'optimizer': self.optimizer.state_dict(),
+            'lr_scheduler': self.lr_scheduler.state_dict() if self.lr_scheduler is not None else None
         }, save_dir / 'full_cp.pt')
         self.model.to(device=self.env.device)
 
