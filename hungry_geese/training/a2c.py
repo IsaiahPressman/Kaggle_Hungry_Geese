@@ -336,6 +336,15 @@ class A2C:
         }, save_dir / 'full_cp.pt')
         self.model.to(device=self.env.device)
 
+    def load_checkpoint(self, load_dir: Path) -> NoReturn:
+        checkpoint_dict = torch.load(load_dir / 'full_cp.pt')
+        self.model.cpu()
+        self.model.load_state_dict(checkpoint_dict['model'])
+        self.model.to(device=self.env.device)
+        self.batch_counter = checkpoint_dict['batch_counter']
+        self.optimizer.load_state_dict(checkpoint_dict['optimizer'])
+        self.lr_scheduler.load_state_dict(checkpoint_dict['lr_scheduler'])
+
 
 def compute_td_target(
         v_final: torch.Tensor,
