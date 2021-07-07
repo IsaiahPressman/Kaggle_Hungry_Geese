@@ -344,6 +344,11 @@ class A2C:
         self.batch_counter = checkpoint_dict['batch_counter']
         self.optimizer.load_state_dict(checkpoint_dict['optimizer'])
         self.lr_scheduler.load_state_dict(checkpoint_dict['lr_scheduler'])
+        # Save the starting checkpoint params
+        checkpoint_dir = self.exp_folder / f'initial_{self.batch_counter:06}'
+        checkpoint_dir.mkdir()
+        self.render_n_games(checkpoint_dir)
+        self.save(checkpoint_dir)
 
 
 def compute_td_target(
