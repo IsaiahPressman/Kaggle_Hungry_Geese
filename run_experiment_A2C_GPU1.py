@@ -15,7 +15,7 @@ if __name__ == '__main__':
     DEVICE = torch.device('cuda:1')
 
     obs_type = ge.ObsType.COMBINED_GRADIENT_OBS_LARGE
-    n_channels = 128
+    n_channels = 64
     activation = nn.ReLU
     normalize = False
     use_mhsa = False
@@ -65,7 +65,7 @@ if __name__ == '__main__':
     model.to(device=DEVICE)
     optimizer = torch.optim.RMSprop(
         model.parameters(),
-        lr=0.0003,
+        lr=0.001,
         alpha=0.9,
         weight_decay=1e-5,
     )
@@ -73,7 +73,7 @@ if __name__ == '__main__':
     lr_scheduler = None
     env = TorchEnv(
         config=Configuration(kaggle_make('hungry_geese', debug=False).configuration),
-        n_envs=1024,
+        n_envs=512,
         obs_type=obs_type,
         device=DEVICE,
     )
@@ -92,8 +92,8 @@ if __name__ == '__main__':
         lr_scheduler=lr_scheduler,
         env=env,
         policy_weight=1.,
-        value_weight=0.5,
-        entropy_weight=5e-4,
+        value_weight=1.,
+        entropy_weight=0.01,
         use_action_masking=True,
         use_mixed_precision=True,
         clip_grads=10.,
@@ -109,7 +109,7 @@ if __name__ == '__main__':
     try:
         train_alg.train(
             n_batches=int(1e9),
-            batch_len=10,
+            batch_len=5,
             gamma=0.999
         )
     except KeyboardInterrupt:
