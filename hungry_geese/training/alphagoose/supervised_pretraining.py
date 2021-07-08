@@ -305,15 +305,36 @@ class SupervisedPretraining:
                     s, _, _, info_dict = rendering_env.soft_reset()
                     s = torch.from_numpy(s)
 
-    def save(self, save_dir: Path, finished: bool = False):
+    def save(self, save_dir: Union[str, Path], finished: bool = False) -> NoReturn:
+        save_dir = Path(save_dir)
         if finished:
             save_dir = save_dir / f'final_{self.epoch_counter}'
             save_dir.mkdir()
-        # Save model params as .txt and .pt
+        # Save model params as cp.pt and model + optimizer params as full_cp.pt
         self.model.cpu()
-        state_dict_bytes = pickle.dumps(self.model.state_dict())
-        serialized_string = base64.b64encode(state_dict_bytes)
-        with open(save_dir / 'cp.txt', 'w') as f:
-            f.write(str(serialized_string))
         torch.save(self.model.state_dict(), save_dir / 'cp.pt')
+        torch.save({
+            'epoch_counter': self.epoch_counter,
+            'model': self.model.state_dict(),
+            'optimizer': self.optimizer.state_dict(),
+            'lr_scheduler': self.lr_scheduler.state_dict() if self.lr_scheduler is not None else None
+        }, save_dir / 'full_cp.pt')
         self.model.to(device=self.device)
+
+    def load_checkpoint(self, load_dir: Union[str, Path]) -> NoReturn:
+        load_dir = Path(load_dir)
+        checkpoint_dict = torch.load(load_dir / 'full_cp.pt')
+        self.model.cpu()
+        self.model.load_state_dict(checkpoint_dict['model'])
+        self.model.to(device=self.device)
+        self.epoch_counter = checkpoint_dict['epoch_counter']
+        self.optimizer.load_state_dict(checkpoint_dict['optimizer'])
+        if self.lr_scheduler is not None:
+            self.lr_scheduler.load_state_dict(checkpoint_dict['lr_scheduler'])
+        print(f'\nLoaded checkpoint from: {load_dir}')
+
+        # Save the starting checkpoint params
+        checkpoint_dir = self.exp_folder / f'initial_{self.epoch_counter:04}'
+        checkpoint_dir.mkdir()
+        self.render_n_games(checkpoint_dir)
+        self.save(checkpoint_dir)
