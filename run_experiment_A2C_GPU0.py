@@ -15,7 +15,7 @@ if __name__ == '__main__':
     DEVICE = torch.device('cuda:0')
 
     obs_type = ge.ObsType.COMBINED_GRADIENT_OBS_LARGE
-    n_channels = 92
+    n_channels = 64
     activation = nn.ReLU
     normalize = False
     use_mhsa = False
@@ -62,10 +62,11 @@ if __name__ == '__main__':
         # **ge.RewardType.RANK_ON_DEATH.get_recommended_value_activation_scale_shift_dict()
     )
     model = models.FullConvActorCriticNetwork(**model_kwargs)
+    model.load_state_dict(torch.load('PRETRAINED_LOAD_PATH/cp.pt'))
     model.to(device=DEVICE)
     optimizer = torch.optim.RMSprop(
         model.parameters(),
-        lr=0.0003,
+        lr=0.001,
         alpha=0.9,
         weight_decay=1e-5,
     )
@@ -73,7 +74,7 @@ if __name__ == '__main__':
     lr_scheduler = None
     env = TorchEnv(
         config=Configuration(kaggle_make('hungry_geese', debug=False).configuration),
-        n_envs=1024,
+        n_envs=512,
         obs_type=obs_type,
         device=DEVICE,
     )
@@ -92,8 +93,8 @@ if __name__ == '__main__':
         lr_scheduler=lr_scheduler,
         env=env,
         policy_weight=1.,
-        value_weight=0.5,
-        entropy_weight=1e-4,
+        value_weight=1.,
+        entropy_weight=1e-3,
         use_action_masking=True,
         use_mixed_precision=True,
         clip_grads=10.,
@@ -104,12 +105,16 @@ if __name__ == '__main__':
     this_script = Path(__file__).absolute()
     shutil.copy(this_script, train_alg.exp_folder / f'_{this_script.name}')
 
+    """
     # Load a previous checkpoint
-    # train_alg.load_checkpoint(LOAD_DIR)
+    train_alg.load_checkpoint(
+        'runs/A2C/active/GPU0_A2C_combined_gradient_obs_large_rank_on_death_opposite_4_blocks_92_dims_v0_c0/final_70711'
+    )
+    """
     try:
         train_alg.train(
             n_batches=int(1e9),
-            batch_len=10,
+            batch_len=5,
             gamma=0.999
         )
     except KeyboardInterrupt:
