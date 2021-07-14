@@ -296,7 +296,7 @@ class A2C:
                 available_actions_mask = torch.from_numpy(
                     info_dict['available_actions_mask']
                 ).to(device=self.env.device).view(-1, rendering_env.n_players, 4)
-                a = self.model.sample_action(
+                a = self.model.choose_best_action(
                     s.to(device=self.env.device).view(-1, *s_shape[-3:]),
                     head_locs=head_locs,
                     still_alive=still_alive,
