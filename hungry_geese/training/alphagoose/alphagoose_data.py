@@ -8,6 +8,7 @@ import torch
 from torch.utils.data import Dataset
 from typing import *
 
+from ...config import N_PLAYERS
 from ...env.goose_env import ObsType, create_obs_tensor
 from ...utils import read_json_lines
 
@@ -213,37 +214,31 @@ class ChannelShuffle:
     and far between.
     """
 
-    def __init__(self, obs_type: ObsType):
+    def __init__(self, obs_type: ObsType, n_players: int = N_PLAYERS):
         self.obs_type = obs_type
+        self.n_players = n_players
 
     def __call__(
             self,
             sample: Sequence[np.ndarray]
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        state, actions, ranks_rescaled, head_locs, still_alive = sample
-        n_players = actions.size
-        shuffled_player_idxs = np.random.permutation(n_players)
-        shuffled_channel_idxs = self.get_idxs(n_players, tuple(shuffled_player_idxs))
+    ) -> Sequence[np.ndarray]:
+        state, *other_arrays = sample
+        shuffled_player_idxs = np.random.permutation(self.n_players)
+        shuffled_channel_idxs = self.get_idxs(tuple(shuffled_player_idxs))
 
-        return (
-            state[shuffled_channel_idxs, :, :],
-            actions[shuffled_player_idxs],
-            ranks_rescaled[shuffled_player_idxs],
-            head_locs[shuffled_player_idxs],
-            still_alive[shuffled_player_idxs]
-        )
+        return tuple([state[shuffled_channel_idxs, :, :]] + [arr[shuffled_player_idxs] for arr in other_arrays])
 
     @functools.lru_cache()
-    def get_idxs(self, n_players: int, shuffled_player_idxs: Tuple) -> List[int]:
+    def get_idxs(self, shuffled_player_idxs: Tuple) -> List[int]:
         if self.obs_type == ObsType.COMBINED_GRADIENT_OBS_SMALL:
             n = 2
             pre_idxs = []
-            channel_idxs = [[i for i in range(p * n, p * n + n)] for p in range(n_players)]
+            channel_idxs = [[i for i in range(p * n, p * n + n)] for p in range(self.n_players)]
             post_idxs = [-3, -2, -1]
         elif self.obs_type == ObsType.COMBINED_GRADIENT_OBS_LARGE:
             n = 3
             pre_idxs = []
-            channel_idxs = [[i for i in range(p * n, p * n + n)] for p in range(n_players)]
+            channel_idxs = [[i for i in range(p * n, p * n + n)] for p in range(self.n_players)]
             post_idxs = [-3, -2, -1]
         else:
             raise NotImplementedError(f'Not yet a supported obs_type: {self.obs_type}')
