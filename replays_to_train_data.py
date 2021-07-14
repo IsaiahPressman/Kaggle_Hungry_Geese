@@ -28,9 +28,6 @@ def process_replay_file(replay_dict: Dict) -> List[STATE_TYPE]:
     agent_rankings = stats.rankdata(game_score, method='average') - 1.
     for step_idx, step in enumerate(env.steps[:-1]):
         for agent_idx, agent in enumerate(step):
-            # agent['action'] is renamed to 'last_action' to avoid confusion
-            agent['last_action'] = agent['action']
-            del agent['action']
             agent['next_action'] = env.steps[step_idx + 1][agent_idx]['action']
             agent['final_rank'] = agent_rankings[agent_idx]
 

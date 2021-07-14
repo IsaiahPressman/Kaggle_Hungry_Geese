@@ -92,9 +92,11 @@ class AlphaGoosePretrainDataset(Dataset):
                 self.samples.extend([(episode_path, step_idx) for step_idx in range(len(step_list))])
         self.obs_type = obs_type
         self.transform = transform
-        if self.obs_type not in (ObsType.COMBINED_GRADIENT_OBS_SMALL, ObsType.COMBINED_GRADIENT_OBS_LARGE):
+        if self.obs_type not in (ObsType.COMBINED_GRADIENT_OBS_SMALL,
+                                 ObsType.COMBINED_GRADIENT_OBS_LARGE,
+                                 ObsType.COMBINED_GRADIENT_OBS_FULL):
             raise ValueError('Other obs_types have not yet been implemented, '
-                             'they will need different data concatenation')
+                             'they may need different data concatenation')
 
     def __getitem__(self, index: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         episode_path, step_idx = self.samples[index]
@@ -138,15 +140,15 @@ class AlphaGooseRandomReflect:
 
     def __init__(self, obs_type: ObsType):
         self.obs_type = obs_type
-        if self.obs_type not in (ObsType.COMBINED_GRADIENT_OBS_SMALL, ObsType.COMBINED_GRADIENT_OBS_LARGE):
-            raise ValueError('Other obs_types have not yet been implemented.')
 
     def __call__(
             self,
             sample: Sequence[np.ndarray]
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         state, policies, available_actions_masks, ranks_rescaled, head_locs, still_alive = sample
-        if self.obs_type in (ObsType.COMBINED_GRADIENT_OBS_SMALL, ObsType.COMBINED_GRADIENT_OBS_LARGE):
+        if self.obs_type in (ObsType.COMBINED_GRADIENT_OBS_SMALL,
+                             ObsType.COMBINED_GRADIENT_OBS_LARGE,
+                             ObsType.COMBINED_GRADIENT_OBS_FULL):
             new_head_locs = np.arange(state.shape[-2] * state.shape[-1]).reshape(*state.shape[-2:])
             # Flip vertically
             if random.random() < 0.5:
@@ -184,7 +186,9 @@ class PretrainRandomReflect:
             sample: Sequence[np.ndarray]
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         state, actions, ranks_rescaled, head_locs, still_alive = sample
-        if self.obs_type in (ObsType.COMBINED_GRADIENT_OBS_SMALL, ObsType.COMBINED_GRADIENT_OBS_LARGE):
+        if self.obs_type in (ObsType.COMBINED_GRADIENT_OBS_SMALL,
+                             ObsType.COMBINED_GRADIENT_OBS_LARGE,
+                             ObsType.COMBINED_GRADIENT_OBS_FULL):
             new_head_locs = np.arange(state.shape[-2] * state.shape[-1]).reshape(*state.shape[-2:])
             # Flip vertically
             if random.random() < 0.5:
@@ -237,6 +241,11 @@ class ChannelShuffle:
             post_idxs = [-3, -2, -1]
         elif self.obs_type == ObsType.COMBINED_GRADIENT_OBS_LARGE:
             n = 3
+            pre_idxs = []
+            channel_idxs = [[i for i in range(p * n, p * n + n)] for p in range(self.n_players)]
+            post_idxs = [-3, -2, -1]
+        elif self.obs_type == ObsType.COMBINED_GRADIENT_OBS_FULL:
+            n = 4
             pre_idxs = []
             channel_idxs = [[i for i in range(p * n, p * n + n)] for p in range(self.n_players)]
             post_idxs = [-3, -2, -1]
