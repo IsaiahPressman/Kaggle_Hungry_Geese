@@ -7,7 +7,8 @@ from typing import *
 
 from ...env.torch_env import TorchEnv
 from ...mcts.torch_mcts import TorchMCTS
-from ...mcts.utils import torch_actor_critic_factory, torch_terminal_value_func, rankdata_average
+from ...mcts.utils import torch_actor_critic_factory
+from ...utils import torch_terminal_value_func, torch_rankdata_average
 from hungry_geese.nns.models import FullConvActorCriticNetwork
 from .alphagoose_data_generator import reload_model_weights, save_episodes_worker
 
@@ -68,7 +69,7 @@ def main_env_worker(
             ))
             dones_before_reset = shared_env.dones.cpu().clone()
             if dones_before_reset.any():
-                all_agent_rankings = rankdata_average(shared_env.rewards).cpu()
+                all_agent_rankings = torch_rankdata_average(shared_env.rewards).cpu()
                 for env_idx in torch.arange(shared_env.n_envs)[dones_before_reset]:
                     finished_episodes[env_idx] = all_episodes[env_idx]
                     all_episodes[env_idx] = []

@@ -29,6 +29,8 @@ class AlphaGooseTrainer:
             lr_scheduler: torch.optim.lr_scheduler,
             dataset_kwargs: Dict,
             dataloader_kwargs: Dict,
+            n_iter_per_game: int = 2,
+            delete_game_after_use: bool = False,
             min_saved_steps: int = int(2.5e5),
             policy_weight: float = 1.,
             value_weight: float = 1.,
@@ -46,7 +48,11 @@ class AlphaGooseTrainer:
         self.optimizer = optimizer
         self.lr_scheduler = lr_scheduler
         self.dataset_kwargs = dataset_kwargs
+        assert 'is_valid_file' not in self.dataset_kwargs.keys()
+        self.dataset_kwargs['is_valid_file'] = self.is_valid_file
         self.dataloader_kwargs = dataloader_kwargs
+        self.n_iter_per_game = n_iter_per_game
+        self.delete_game_after_use = delete_game_after_use
         self.min_saved_steps = min_saved_steps
         self.policy_weight = policy_weight
         assert self.policy_weight >= 0.
@@ -62,7 +68,7 @@ class AlphaGooseTrainer:
         self.pt_weights_dir = self.exp_folder / 'all_checkpoints_pt'
         if not self.exp_folder.exists():
             raise FileNotFoundError(f'{self.exp_folder} does not exist')
-        starting_weights_path = self.exp_folder / 'starting_weights.txt'
+        starting_weights_path = self.exp_folder / 'starting_weights.pt'
         if not starting_weights_path.exists() and not start_from_scratch:
             raise FileNotFoundError(f'{starting_weights_path} does not exist')
         if len(list(self.pt_weights_dir.glob('*.pt'))) > 1:
@@ -84,6 +90,7 @@ class AlphaGooseTrainer:
         else:
             self.rendering_env_kwargs = None
 
+        self.game_iter_counter = {}
         self.epoch_counter = 0
         self.batch_counter = 0
         existing_tf_events = list(self.exp_folder.glob('*.tfevents.*'))
@@ -91,14 +98,9 @@ class AlphaGooseTrainer:
             os.remove(tf_event)
         self.summary_writer = SummaryWriter(str(self.exp_folder))
 
-        if not start_from_scratch:
-            with open(starting_weights_path, 'r') as f:
-                serialized_string = f.readline()[2:-1].encode()
-            state_dict_bytes = base64.b64decode(serialized_string)
-            loaded_state_dicts = pickle.loads(state_dict_bytes)
-            model.cpu()
-            model.load_state_dict(loaded_state_dicts)
         model.cpu()
+        if not start_from_scratch:
+            model.load_state_dict(torch.load(starting_weights_path))
         # This is where the alphagoose_data_generators will find the model weights
         torch.save(model.state_dict(), self.pt_weights_dir / f'0.pt')
         model.to(device=self.device)
@@ -185,6 +187,10 @@ class AlphaGooseTrainer:
                     self.epoch_counter
                 )
                 self.epoch_counter += 1
+                for sample in dataset.episodes:
+                    self.game_iter_counter[sample] = self.game_iter_counter.get(sample, 0) + 1
+                    if self.delete_game_after_use and self.game_iter_counter[sample] >= self.n_iter_per_game:
+                        os.remove(sample)
                 # Sleep to make sure the data_generator has time to acquire the lock and save the latest episodes
                 time.sleep(2.)
             finally:
@@ -236,6 +242,9 @@ class AlphaGooseTrainer:
                              self.value_weight * value_loss)
 
         return policy_loss, value_loss, combined_loss
+
+    def is_valid_file(self, episode_path):
+        return self.n_iter_per_game == 0 or self.game_iter_counter.get(episode_path, 0) < self.n_iter_per_game
 
     def log_train(self, train_metrics: Dict[str, List], n_batches: int) -> NoReturn:
         for metric_name, metric in train_metrics.items():
@@ -313,16 +322,9 @@ class AlphaGooseTrainer:
                     s = torch.from_numpy(s)
 
     def save(self, save_dir: Path, finished: bool = False):
-        if finished:
-            save_dir = save_dir / f'final_{self.epoch_counter}'
-            save_dir.mkdir()
         # Save model params
         self.model.cpu()
         # Save model to weights_dir for data_generator_workers
         with FileLock(str(self.pt_weights_dir) + '.lock'):
             torch.save(self.model.state_dict(), self.pt_weights_dir / f'{self.epoch_counter}.pt')
-        state_dict_bytes = pickle.dumps(self.model.state_dict())
-        serialized_string = base64.b64encode(state_dict_bytes)
-        with open(save_dir / 'cp.txt', 'w') as f:
-            f.write(str(serialized_string))
         self.model.to(device=self.device)

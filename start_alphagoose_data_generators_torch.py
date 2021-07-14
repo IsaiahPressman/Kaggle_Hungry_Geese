@@ -15,8 +15,8 @@ from hungry_geese.utils import format_experiment_name
 def main():
     device = torch.device('cuda:0')
 
-    obs_type = ge.ObsType.COMBINED_GRADIENT_OBS_SMALL
-    n_channels = 64
+    obs_type = ge.ObsType.COMBINED_GRADIENT_OBS_LARGE
+    n_channels = 92
     activation = nn.ReLU
     normalize = False
     use_mhsa = False
@@ -67,7 +67,7 @@ def main():
                                                              ge.RewardType.RANK_ON_DEATH,
                                                              ge.ActionMasking.OPPOSITE,
                                                              [n_channels],
-                                                             model_kwargs['conv_block_kwargs']) + '_v1'
+                                                             model_kwargs['conv_block_kwargs']) + '_v2'
     weights_dir = Path(
         f'runs/alphagoose/active/{experiment_name}/all_checkpoints_pt'
     )
@@ -79,13 +79,13 @@ def main():
 
     env_kwargs = dict(
         config=Configuration(kaggle_make('hungry_geese', debug=False).configuration),
-        n_envs=1_000,
+        n_envs=5_000,
         obs_type=obs_type,
         device=device,
     )
 
     mcts_kwargs = dict(
-        n_iter=100,
+        n_iter=150,
         c_puct=1.,
         add_noise=True,
         noise_val=2.,
@@ -103,7 +103,7 @@ def main():
         dataset_dir=dataset_dir,
         weights_dir=weights_dir,
         allow_resume=True,
-        max_saved_batches=25_000,
+        max_saved_batches=int(1e10),
         update_model_freq=10,
         use_mixed_precision=False,
         env_kwargs=env_kwargs,

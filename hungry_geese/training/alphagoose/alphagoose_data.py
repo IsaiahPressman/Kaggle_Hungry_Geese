@@ -16,8 +16,12 @@ class AlphaGooseDataset(Dataset):
     def __init__(self,
                  dataset_dir: Union[str, Path],
                  obs_type: ObsType,
-                 transform: Optional[Callable] = None):
-        self.episodes = [d for d in Path(dataset_dir).glob('*.ljson')]
+                 transform: Optional[Callable] = None,
+                 is_valid_file: Optional[Callable] = None):
+        if is_valid_file is None:
+            def is_valid_file(_):
+                return True
+        self.episodes = [e for e in Path(dataset_dir).glob('*.ljson') if is_valid_file(e)]
         self.samples = []
         for episode_path in self.episodes:
             with open(episode_path, 'rb') as f:
@@ -201,7 +205,7 @@ class PretrainRandomReflect:
         return state, actions, ranks_rescaled, head_locs, still_alive
 
 
-class PretrainChannelShuffle:
+class ChannelShuffle:
     """
     Given a tuple of (state, actions, ranks_rescaled, head_locs, still_alive) arrays, randomly shuffle the channels
     pertaining to given geese, such that goose 1 may become goose 0.

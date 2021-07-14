@@ -4,7 +4,7 @@ from torch import nn
 from torchvision import transforms
 
 from hungry_geese.training.alphagoose.alphagoose_trainer import AlphaGooseTrainer
-from hungry_geese.training.alphagoose.alphagoose_data import AlphaGooseRandomReflect, ToTensor
+from hungry_geese.training.alphagoose.alphagoose_data import AlphaGooseRandomReflect, ChannelShuffle, ToTensor
 from hungry_geese.env import goose_env as ge
 from hungry_geese.nns import models, conv_blocks
 from hungry_geese.utils import format_experiment_name
@@ -12,8 +12,8 @@ from hungry_geese.utils import format_experiment_name
 if __name__ == '__main__':
     DEVICE = torch.device('cuda:1')
 
-    obs_type = ge.ObsType.COMBINED_GRADIENT_OBS_SMALL
-    n_channels = 64
+    obs_type = ge.ObsType.COMBINED_GRADIENT_OBS_LARGE
+    n_channels = 92
     activation = nn.ReLU
     normalize = False
     use_mhsa = False
@@ -61,9 +61,9 @@ if __name__ == '__main__':
     )
     model = models.FullConvActorCriticNetwork(**model_kwargs)
     model.to(device=DEVICE)
-    optimizer = torch.optim.Adam(
+    optimizer = torch.optim.RMSprop(
         model.parameters(),
-        #lr=0.05,
+        lr=0.002,
         #momentum=0.9,
         #weight_decay=1e-4
     )
@@ -80,6 +80,7 @@ if __name__ == '__main__':
         obs_type=obs_type,
         transform=transforms.Compose([
             AlphaGooseRandomReflect(obs_type),
+            ChannelShuffle(obs_type),
             ToTensor()
         ]),
     )
@@ -94,7 +95,7 @@ if __name__ == '__main__':
                                                              ge.RewardType.RANK_ON_DEATH,
                                                              ge.ActionMasking.OPPOSITE,
                                                              [n_channels],
-                                                             model_kwargs['conv_block_kwargs']) + '_v1'
+                                                             model_kwargs['conv_block_kwargs']) + '_v2'
     exp_folder = Path(f'runs/alphagoose/active/{experiment_name}')
     train_alg = AlphaGooseTrainer(
         model=model,
@@ -102,11 +103,13 @@ if __name__ == '__main__':
         lr_scheduler=lr_scheduler,
         dataset_kwargs=dataset_kwargs,
         dataloader_kwargs=dataloader_kwargs,
+        n_iter_per_game=3,
+        delete_game_after_use=False,
         device=DEVICE,
         use_mixed_precision=True,
         exp_folder=exp_folder,
         checkpoint_freq=1,
-        checkpoint_render_n_games=0,
+        checkpoint_render_n_games=2,
 
         # min_saved_steps=10,
         # min_saved_steps=int(5e5),
