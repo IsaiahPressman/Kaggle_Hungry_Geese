@@ -193,13 +193,13 @@ class A2C:
         alive_tensor = torch.stack(alive_buffer, dim=0)
         train_start_time = time.time()
         s, _, dead = self.env.reset(get_reward_and_dead=True)
-        _, v_final = self.model(
-            states=s.clone(),
-            head_locs=self.env.head_locs,
-            still_alive=~dead,
-        )
-        v_final = v_final.detach()
-        td_target = compute_td_target(v_final, r_buffer, alive_buffer, dead_buffer, gamma)
+        with torch.no_grad():
+            _, v_final = self.model(
+                states=s.clone(),
+                head_locs=self.env.head_locs,
+                still_alive=~dead,
+            )
+            td_target = compute_td_target(v_final, r_buffer, alive_buffer, dead_buffer, gamma)
         td_target_masked = td_target[alive_tensor]
         value_masked = v_tensor[alive_tensor]
         advantage = td_target_masked - value_masked
@@ -356,6 +356,7 @@ class A2C:
         self.save(checkpoint_dir)
 
 
+@torch.no_grad()
 def compute_td_target(
         v_final: torch.Tensor,
         r_buffer: List[torch.Tensor],
@@ -375,4 +376,4 @@ def compute_td_target(
         )
         td_target.append(v_next_s)
 
-    return torch.stack(td_target[::-1], dim=0).detach()
+    return torch.stack(td_target[::-1], dim=0)
