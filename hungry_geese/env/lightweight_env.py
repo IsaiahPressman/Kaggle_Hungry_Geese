@@ -64,7 +64,7 @@ class LightweightEnv:
             action = Action[actions[index]]
 
             # Check action direction on any step after the first
-            if self.last_actions[index] == action.opposite() and self.step_counter > 0:
+            if self.last_actions[index] == action.opposite() and self.step_counter > 1:
                 self.debug_print(f'Opposite action: {index, action, self.last_actions[index]}')
                 self.geese[index] = []
                 continue
