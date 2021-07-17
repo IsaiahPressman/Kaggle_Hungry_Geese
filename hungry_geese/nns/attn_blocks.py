@@ -4,14 +4,19 @@ import torch.nn.functional as F
 
 
 class RelPosSelfAttention(nn.Module):
-    """Relative Position Self Attention"""
+    """
+    Torus Relative Position Self Attention
+    Based on: https://gist.github.com/ShoufaChen/ec7b70038a6fdb488da4b34355380569
+    """
 
     def __init__(self, h, w, dim, relative=True, fold_heads=False):
         super(RelPosSelfAttention, self).__init__()
         self.relative = relative
         self.fold_heads = fold_heads
-        self.rel_emb_w = nn.Parameter(torch.Tensor(2 * w - 1, dim))
-        self.rel_emb_h = nn.Parameter(torch.Tensor(2 * h - 1, dim))
+        # self.rel_emb_w = nn.Parameter(torch.Tensor(2 * w - 1, dim))
+        # self.rel_emb_h = nn.Parameter(torch.Tensor(2 * h - 1, dim))
+        self.rel_emb_w = nn.Parameter(torch.Tensor(w, dim))
+        self.rel_emb_h = nn.Parameter(torch.Tensor(h, dim))
 
         nn.init.normal_(self.rel_emb_w, std=dim ** -0.5)
         nn.init.normal_(self.rel_emb_h, std=dim ** -0.5)
@@ -33,10 +38,17 @@ class RelPosSelfAttention(nn.Module):
 
     def relative_logits(self, q):
         # Relative logits in width dimension.
-        rel_logits_w = self.relative_logits_1d(q, self.rel_emb_w, transpose_mask=[0, 1, 2, 4, 3, 5])
+        rel_logits_w = self.relative_logits_1d(
+            q,
+            torch.cat([self.rel_emb_w, self.rel_emb_w[:-1]], dim=0),
+            transpose_mask=[0, 1, 2, 4, 3, 5]
+        )
         # Relative logits in height dimension
-        rel_logits_h = self.relative_logits_1d(q.permute(0, 1, 3, 2, 4), self.rel_emb_h,
-                                               transpose_mask=[0, 1, 4, 2, 5, 3])
+        rel_logits_h = self.relative_logits_1d(
+            q.permute(0, 1, 3, 2, 4),
+            torch.cat([self.rel_emb_h, self.rel_emb_h[:-1]], dim=0),
+            transpose_mask=[0, 1, 4, 2, 5, 3]
+        )
         return rel_logits_h + rel_logits_w
 
     def relative_logits_1d(self, q, rel_k, transpose_mask):
