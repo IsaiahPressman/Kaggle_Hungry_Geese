@@ -17,6 +17,7 @@ from hungry_geese.env import goose_env as ge
 from hungry_geese.env.lightweight_env import LightweightEnv, make_from_state
 from hungry_geese.mcts.basic_mcts import BasicMCTS, Node
 from hungry_geese.nns import conv_blocks, models
+from hungry_geese.nns.misc import Simple1x1Conv
 
 BOARD_DIMS = np.array([N_ROWS, N_COLS])
 
@@ -32,12 +33,6 @@ DIRECTIONS_DICT = {tuple(wrap(np.array(act.to_row_col()))): act for act in Actio
 
 def get_direction(from_loc: np.ndarray, to_loc: np.ndarray) -> Action:
     return DIRECTIONS_DICT[tuple(wrap(to_loc - from_loc))]
-
-
-def terminal_value_func(state: STATE_TYPE) -> np.ndarray:
-    agent_rankings = stats.rankdata([agent['reward'] for agent in state], method='average') - 1.
-    ranks_rescaled = 2. * agent_rankings / (len(state) - 1.) - 1.
-    return ranks_rescaled
 
 
 # Credit for scaled and inverse_scaled sigmoid:
@@ -96,12 +91,14 @@ OVERAGE_BUFFER: How much overage time to leave as a buffer for the steps after E
 """
 C_PUCT = 1.
 DELTA = 0.12
+POLICY_TEMP = 1.
 MIN_THRESHOLD_FOR_CONSIDERATION = 0.15
 MAX_SEARCH_ITER = 6
 RESET_SEARCH = True
 OVERAGE_BUFFER = 2.
 PER_ROUND_BATCHED_TIME_ALLOCATION = 0.9
 BATCH_SIZE = 1
+RESCALE_VALUES = True
 
 # Dynamic noise for opponent actions
 NOISE_TYPE = 'linear'
@@ -115,6 +112,8 @@ UPDATE_NOISE_BASED_ON_ALL_STEPS = True
 
 # Used for local evaluation
 LOCAL_EVAL_MULTIPLIER = 0.5
+LOCAL_EVAL_USE_SEARCH = True
+LOCAL_EVAL_MAX_ITER = 10000 if LOCAL_EVAL_USE_SEARCH else 0
 
 
 class Agent:
@@ -122,49 +121,82 @@ class Agent:
         self.index = obs.index
         self.n_geese = len(obs.geese)
 
-        obs_type = ge.ObsType.COMBINED_GRADIENT_OBS_LARGE
-        n_channels = 92
-        activation = nn.ReLU
-        normalize = False
-        use_mhsa = False
+        obs_type = ge.ObsType.COMBINED_GRADIENT_OBS_FULL
+        n_heads = 4
+        n_channels = n_heads * 32
+        activation = nn.GELU
+        normalize = True
+        use_preprocessing = True
         model_kwargs = dict(
-            block_class=conv_blocks.BasicConvolutionalBlock,
-            conv_block_kwargs=[
-                dict(
-                    in_channels=obs_type.get_obs_spec()[-3],
-                    out_channels=n_channels,
-                    kernel_size=3,
-                    activation=activation,
-                    normalize=normalize,
-                    use_mhsa=False
+            preprocessing_layer=nn.Sequential(
+                Simple1x1Conv(
+                    obs_type.get_obs_spec()[-3],
+                    n_channels
                 ),
-                dict(
+                nn.ReLU()
+            ) if use_preprocessing else None,
+            base_model=nn.Sequential(
+                conv_blocks.BasicAttentionBlock(
+                    in_channels=n_channels if use_preprocessing else obs_type.get_obs_spec()[-3],
+                    out_channels=n_channels,
+                    mhsa_heads=n_heads,
+                    activation=activation,
+                    normalize=normalize
+                ),
+                conv_blocks.BasicAttentionBlock(
                     in_channels=n_channels,
                     out_channels=n_channels,
-                    kernel_size=3,
+                    mhsa_heads=n_heads,
                     activation=activation,
-                    normalize=normalize,
-                    use_mhsa=False
+                    normalize=normalize
                 ),
-                dict(
+                conv_blocks.BasicAttentionBlock(
                     in_channels=n_channels,
                     out_channels=n_channels,
-                    kernel_size=3,
+                    mhsa_heads=n_heads,
                     activation=activation,
-                    normalize=normalize,
-                    use_mhsa=False
+                    normalize=normalize
                 ),
-                dict(
+                conv_blocks.BasicAttentionBlock(
                     in_channels=n_channels,
                     out_channels=n_channels,
-                    kernel_size=3,
+                    mhsa_heads=n_heads,
                     activation=activation,
-                    normalize=normalize,
-                    use_mhsa=use_mhsa,
-                    mhsa_heads=4,
+                    normalize=normalize
                 ),
-            ],
-            squeeze_excitation=True,
+                conv_blocks.BasicAttentionBlock(
+                    in_channels=n_channels,
+                    out_channels=n_channels,
+                    mhsa_heads=n_heads,
+                    activation=activation,
+                    normalize=normalize
+                ),
+                conv_blocks.BasicAttentionBlock(
+                    in_channels=n_channels,
+                    out_channels=n_channels,
+                    mhsa_heads=n_heads,
+                    activation=activation,
+                    normalize=normalize
+                ),
+                conv_blocks.BasicAttentionBlock(
+                    in_channels=n_channels,
+                    out_channels=n_channels,
+                    mhsa_heads=n_heads,
+                    activation=activation,
+                    normalize=normalize
+                ),
+                conv_blocks.BasicAttentionBlock(
+                    in_channels=n_channels,
+                    out_channels=n_channels,
+                    mhsa_heads=n_heads,
+                    activation=activation,
+                    normalize=normalize
+                ),
+                nn.LayerNorm([n_channels, N_ROWS, N_COLS])
+            ),
+            base_out_channels=n_channels,
+            actor_critic_activation=nn.GELU,
+            n_action_value_layers=2,
             cross_normalize_value=True,
             use_separate_action_value_heads=True,
             # **ge.RewardType.RANK_ON_DEATH.get_recommended_value_activation_scale_shift_dict()
@@ -173,8 +205,13 @@ class Agent:
         try:
             self.model.load_state_dict(torch.load('/kaggle_simulations/agent/cp.pt'))
             self.le_mult = 1.
+            self.max_n_iter = 10000
+            # Always use search at test time
+            self.use_search = True
         except FileNotFoundError:
             self.le_mult = LOCAL_EVAL_MULTIPLIER
+            self.max_n_iter = LOCAL_EVAL_MAX_ITER
+            self.use_search = LOCAL_EVAL_USE_SEARCH
             print('Running local evaluation!')
             try:
                 self.model.load_state_dict(torch.load(Path.home() / 'GitHub/Kaggle/Hungry_Geese/cp.pt'))
@@ -199,7 +236,7 @@ class Agent:
         self.search_tree = BasicMCTS(
             action_mask_func=ActionMasking.LETHAL.get_action_mask,
             actor_critic_func=self.batch_actor_critic_func if BATCH_SIZE > 1 else self.actor_critic_func,
-            terminal_value_func=terminal_value_func,
+            terminal_value_func=self.terminal_value_func,
             c_puct=C_PUCT,
             virtual_loss=3.,
             include_food=False,
@@ -226,6 +263,7 @@ class Agent:
         self.all_actions = torch.zeros((conf.episode_steps - 1, self.n_geese, 4), dtype=torch.float32)
         self.all_policy_preds = torch.zeros_like(self.all_actions)
         self.all_action_masks = torch.zeros_like(self.all_actions)
+        self.still_alive = np.ones(self.n_geese, dtype=bool)
 
     def preprocess(self, obs: Observation, conf: Configuration) -> NoReturn:
         for goose_idx, goose in enumerate(obs.geese):
@@ -239,6 +277,7 @@ class Agent:
             else:
                 self.last_actions[goose_idx] = Action.NORTH
                 self.last_head_locs[goose_idx] = None
+                self.still_alive[goose_idx] = False
 
     def __call__(self, obs: Observation, conf: Configuration) -> str:
         start_time = time.time()
@@ -271,15 +310,37 @@ class Agent:
         my_best_action_idx, root_node, stopped_early = self.run_search(obs, env)
         search_time = time.time() - search_start_time
 
+        initial_values = root_node.initial_values
         final_policies = root_node.get_improved_policies(temp=1.)
         q_vals = root_node.q_vals
         self.all_policy_preds[obs.step] = torch.from_numpy(final_policies).to(torch.float32)
         self.all_action_masks[obs.step] = torch.from_numpy(root_node.available_actions_masks).to(torch.float32)
 
         # Greedily select best action
-        selected_action = tuple(Action)[my_best_action_idx].name
+        if self.use_search:
+            selected_action = tuple(Action)[my_best_action_idx].name
+        else:
+            my_policy = root_node.initial_policies[self.index]
+            selected_action = tuple(Action)[my_policy.argmax()].name
+
+        # Logging stuff
         early_stopped_logging = 'Stopped search early!' if stopped_early else ''
         total_time = time.time() - start_time
+        initial_values = np.where(
+            self.still_alive[:, None],
+            initial_values,
+            float('NaN')
+        )
+        final_policies = np.where(
+            self.still_alive[:, None],
+            final_policies,
+            float('NaN')
+        )
+        q_vals = np.where(
+            self.still_alive[:, None],
+            q_vals,
+            float('NaN')
+        )
         print(
             f'Step: {obs.step + 1} '
             f'Index: {self.index} '
@@ -290,7 +351,7 @@ class Agent:
             f'N-visits: {root_node.n_visits.sum(axis=1)[self.index]:.0f} '
             f'Total/search/noise update time: {total_time:.2f}/{search_time:.2f}/{noise_update_time:.2f} '
             f'Remaining overage time: {obs.remaining_overage_time:.2f} '
-            f'All initial values: {print_array_one_line(root_node.initial_values.ravel())} '
+            f'All initial values: {print_array_one_line(initial_values.ravel())} '
             f'All policies: {print_array_one_line(final_policies)} '
             f'All Q-values: {print_array_one_line(q_vals)} '
             f'{noise_weights_logging} '
@@ -305,19 +366,19 @@ class Agent:
             self.search_tree.run_batch_mcts(
                 env=env,
                 batch_size=BATCH_SIZE,
-                n_iter=10000,
+                n_iter=self.max_n_iter + 2,
                 max_time=PER_ROUND_BATCHED_TIME_ALLOCATION * self.le_mult
             )
             root_node = self.search_tree.run_batch_mcts(
                 env=env,
                 batch_size=min(BATCH_SIZE, 2),
-                n_iter=10000,
+                n_iter=self.max_n_iter,
                 max_time=max(0.93 * self.le_mult - (time.time() - search_start_time), 0.)
             )
         else:
             root_node = self.search_tree.run_mcts(
                 env=env,
-                n_iter=10000,
+                n_iter=self.max_n_iter + 2,
                 max_time=0.93 * self.le_mult
             )
         initial_policy = root_node.initial_policies[self.index]
@@ -347,13 +408,13 @@ class Agent:
                     root_node = self.search_tree.run_batch_mcts(
                         env=env,
                         batch_size=BATCH_SIZE,
-                        n_iter=10000,
+                        n_iter=self.max_n_iter,
                         max_time=min(0.5 * self.le_mult, remaining_overage_time - (time.time() - search_start_time))
                     )
                 else:
                     root_node = self.search_tree.run_mcts(
                         env=env,
-                        n_iter=10000,
+                        n_iter=self.max_n_iter,
                         max_time=min(0.5 * self.le_mult, remaining_overage_time - (time.time() - search_start_time))
                     )
                 new_improved_policy = root_node.get_improved_policies(temp=1.)[self.index]
@@ -503,7 +564,7 @@ class Agent:
                 torch.tensor(head_locs_list),
                 torch.tensor(still_alive_list)
             )
-            probs = F.softmax(logits, dim=-1).numpy().astype(np.float)
+            probs = F.softmax(logits * POLICY_TEMP, dim=-1).numpy().astype(np.float)
             policy_noise = np.ones((1, 1, 4))
             policy_noise = policy_noise / policy_noise.sum(axis=-1, keepdims=True)
             noise_weights = self.noise_weights.numpy().astype(np.float)
@@ -526,6 +587,18 @@ class Agent:
             values.numpy()
         )
         final_values = (1. - noise_weights) * final_values + noise_weights * value_noise
+
+        # Rescale values to [-1, 1] based on the number of geese alive at the start of the turn
+        # This can improve the MCTS efficiency when there are fewer geese still alive
+        if RESCALE_VALUES:
+            n_geese_alive = self.still_alive.sum()
+            if n_geese_alive == 2:
+                # Rescale from [1/3, 1] -> [-1, 1]
+                final_values = final_values * 3. - 2.
+            elif n_geese_alive == 3:
+                # Rescale from [-1/3, 1] -> [-1, 1]
+                final_values = final_values * 1.5 - 0.5
+
         # Probs should be of shape (n_envs, n_geese, 4)
         # Values should be of shape (n_envs, n_geese, 1)
         return probs, np.expand_dims(final_values, axis=-1)
@@ -533,6 +606,21 @@ class Agent:
     def actor_critic_func(self, state: STATE_TYPE) -> Tuple[np.ndarray, np.ndarray]:
         probs, values = self.batch_actor_critic_func([state])
         return probs.squeeze(0), values.squeeze(0)
+
+    def terminal_value_func(self, state: STATE_TYPE) -> np.ndarray:
+        agent_rankings = stats.rankdata([agent['reward'] for agent in state], method='average') - 1.
+        ranks_rescaled = 2. * agent_rankings / (len(state) - 1.) - 1.
+        # Rescale values to [-1, 1] based on the number of geese alive at the start of the turn
+        # This can improve the MCTS efficiency when there are fewer geese still alive
+        if RESCALE_VALUES:
+            n_geese_alive = self.still_alive.sum()
+            if n_geese_alive == 2:
+                # Rescale from [1/3, 1] -> [-1, 1]
+                ranks_rescaled = ranks_rescaled * 3. - 2.
+            elif n_geese_alive == 3:
+                # Rescale from [-1/3, 1] -> [-1, 1]
+                ranks_rescaled = ranks_rescaled * 1.5 - 0.5
+        return ranks_rescaled
 
     @property
     def noise_weights(self) -> torch.Tensor:

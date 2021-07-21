@@ -7,6 +7,7 @@ from torch import nn
 from torch.utils.data import DataLoader
 from torchvision import transforms
 
+from hungry_geese.config import N_ROWS, N_COLS
 from hungry_geese.nns import models, conv_blocks
 import hungry_geese.env.goose_env as ge
 from hungry_geese.training.alphagoose import alphagoose_data
@@ -17,11 +18,11 @@ if __name__ == '__main__':
     DEVICE = torch.device('cuda:0')
 
     obs_type = ge.ObsType.COMBINED_GRADIENT_OBS_FULL
-    n_channels = 64
+    n_heads = 4
+    n_channels = n_heads * 48
     activation = nn.GELU
-    normalize = False
-    use_mhsa = False
-    use_preprocessing = False
+    normalize = True
+    use_preprocessing = True
     model_kwargs = dict(
         preprocessing_layer=nn.Sequential(
             nn.Conv2d(
@@ -34,66 +35,60 @@ if __name__ == '__main__':
                 n_channels,
                 n_channels,
                 (1, 1)
-            ),
-            activation(),
+            )
         ) if use_preprocessing else None,
-        block_class=conv_blocks.BasicConvolutionalBlock,
-        block_kwargs=[
-            dict(
+        base_model=nn.Sequential(
+            conv_blocks.BasicAttentionBlock(
                 in_channels=n_channels if use_preprocessing else obs_type.get_obs_spec()[-3],
                 out_channels=n_channels,
-                kernel_size=5,
+                mhsa_heads=n_heads,
                 activation=activation,
-                normalize=normalize,
-                use_mhsa=False
+                normalize=normalize
             ),
-            dict(
+            conv_blocks.BasicAttentionBlock(
                 in_channels=n_channels,
                 out_channels=n_channels,
-                kernel_size=3,
+                mhsa_heads=n_heads,
                 activation=activation,
-                normalize=normalize,
-                use_mhsa=False
+                normalize=normalize
             ),
-            dict(
+            conv_blocks.BasicAttentionBlock(
                 in_channels=n_channels,
                 out_channels=n_channels,
-                kernel_size=3,
+                mhsa_heads=n_heads,
                 activation=activation,
-                normalize=normalize,
-                use_mhsa=False
+                normalize=normalize
             ),
-            dict(
+            conv_blocks.BasicAttentionBlock(
                 in_channels=n_channels,
                 out_channels=n_channels,
-                kernel_size=3,
+                mhsa_heads=n_heads,
                 activation=activation,
-                normalize=normalize,
-                use_mhsa=False
+                normalize=normalize
             ),
-            dict(
+            conv_blocks.BasicAttentionBlock(
                 in_channels=n_channels,
                 out_channels=n_channels,
-                kernel_size=3,
+                mhsa_heads=n_heads,
                 activation=activation,
-                normalize=normalize,
-                use_mhsa=False
+                normalize=normalize
             ),
-            dict(
+            conv_blocks.BasicAttentionBlock(
                 in_channels=n_channels,
                 out_channels=n_channels,
-                kernel_size=3,
+                mhsa_heads=n_heads,
                 activation=activation,
-                normalize=normalize,
-                use_mhsa=False
+                normalize=normalize
             ),
-        ],
+            nn.LayerNorm([n_channels, N_ROWS, N_COLS])
+        ),
+        base_out_channels=n_channels,
+        actor_critic_activation=activation,
         n_action_value_layers=2,
-        squeeze_excitation=True,
         cross_normalize_value=True,
         use_separate_action_value_heads=True,
         # **ge.RewardType.RANK_ON_DEATH.get_recommended_value_activation_scale_shift_dict()
-        )
+    )
     model = models.FullConvActorCriticNetwork(**model_kwargs)
     """
     run_dir = 'runs/deep_q/deep_q_head_centered_obs_small_every_step_length_opposite_6_blocks_32_64_128_dims_v1/'
@@ -115,7 +110,6 @@ if __name__ == '__main__':
     batch_size = 2048
     optimizer = torch.optim.Adam(
         model.parameters(),
-        lr=0.001 * batch_size / 2048
     )
     # NB: lr_scheduler counts steps in batches, not epochs
     lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(
@@ -159,11 +153,13 @@ if __name__ == '__main__':
     train_dataloader = DataLoader(train_dataset, num_workers=14, **dataloader_kwargs)
     test_dataloader = DataLoader(test_dataset, num_workers=14, **dataloader_kwargs)
 
-    experiment_name = 'supervised_pretraining_' + format_experiment_name(obs_type,
-                                                                         ge.RewardType.RANK_ON_DEATH,
-                                                                         ge.ActionMasking.NONE,
-                                                                         [n_channels],
-                                                                         model_kwargs['block_kwargs']) + '_v16'
+    experiment_name = 'supervised_pretraining_' + format_experiment_name(
+        obs_type,
+        ge.RewardType.RANK_ON_DEATH,
+        ge.ActionMasking.NONE,
+        [n_channels],
+        model_kwargs.get('block_kwargs', model_kwargs['base_model'][:-1])
+    ) + '_v15'
     exp_folder = Path(f'runs/supervised_pretraining/active/{experiment_name}')
     train_alg = SupervisedPretraining(
         model=model,

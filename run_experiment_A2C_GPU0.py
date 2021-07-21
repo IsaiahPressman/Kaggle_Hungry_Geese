@@ -1,10 +1,13 @@
 from kaggle_environments.envs.hungry_geese.hungry_geese import Configuration
 from kaggle_environments import make as kaggle_make
+import math
 from pathlib import Path
 import shutil
 import torch
 from torch import nn
 
+from hungry_geese.config import N_ROWS, N_COLS
+from hungry_geese.nns.misc import Simple1x1Conv
 from hungry_geese.nns import models, conv_blocks
 import hungry_geese.env.goose_env as ge
 from hungry_geese.env.torch_env import TorchEnv
@@ -14,67 +17,95 @@ from hungry_geese.utils import format_experiment_name
 if __name__ == '__main__':
     DEVICE = torch.device('cuda:0')
 
-    obs_type = ge.ObsType.COMBINED_GRADIENT_OBS_LARGE
-    n_channels = 64
-    activation = nn.ReLU
-    normalize = False
-    use_mhsa = False
+    obs_type = ge.ObsType.COMBINED_GRADIENT_OBS_FULL
+    n_heads = 8
+    n_channels = n_heads * 48
+    activation = nn.GELU
+    normalize = True
+    use_preprocessing = True
     model_kwargs = dict(
-        block_class=conv_blocks.BasicConvolutionalBlock,
-        conv_block_kwargs=[
-            dict(
-                in_channels=obs_type.get_obs_spec()[-3],
-                out_channels=n_channels,
-                kernel_size=3,
-                activation=activation,
-                normalize=normalize,
-                use_mhsa=False
+        preprocessing_layer=nn.Sequential(
+            Simple1x1Conv(
+                obs_type.get_obs_spec()[-3],
+                n_channels
             ),
-            dict(
+            nn.ReLU()
+        ) if use_preprocessing else None,
+        base_model=nn.Sequential(
+            conv_blocks.BasicAttentionBlock(
+                in_channels=n_channels if use_preprocessing else obs_type.get_obs_spec()[-3],
+                out_channels=n_channels,
+                mhsa_heads=n_heads,
+                activation=activation,
+                normalize=normalize
+            ),
+            conv_blocks.BasicAttentionBlock(
                 in_channels=n_channels,
                 out_channels=n_channels,
-                kernel_size=3,
+                mhsa_heads=n_heads,
                 activation=activation,
-                normalize=normalize,
-                use_mhsa=False
+                normalize=normalize
             ),
-            dict(
+            conv_blocks.BasicAttentionBlock(
                 in_channels=n_channels,
                 out_channels=n_channels,
-                kernel_size=3,
+                mhsa_heads=n_heads,
                 activation=activation,
-                normalize=normalize,
-                use_mhsa=False
+                normalize=normalize
             ),
-            dict(
+            conv_blocks.BasicAttentionBlock(
                 in_channels=n_channels,
                 out_channels=n_channels,
-                kernel_size=3,
+                mhsa_heads=n_heads,
                 activation=activation,
-                normalize=normalize,
-                use_mhsa=use_mhsa,
-                mhsa_heads=4,
+                normalize=normalize
             ),
-        ],
-        squeeze_excitation=True,
+            conv_blocks.BasicAttentionBlock(
+                in_channels=n_channels,
+                out_channels=n_channels,
+                mhsa_heads=n_heads,
+                activation=activation,
+                normalize=normalize
+            ),
+            conv_blocks.BasicAttentionBlock(
+                in_channels=n_channels,
+                out_channels=n_channels,
+                mhsa_heads=n_heads,
+                activation=activation,
+                normalize=normalize
+            ),
+            nn.LayerNorm([n_channels, N_ROWS, N_COLS])
+        ),
+        base_out_channels=n_channels,
+        actor_critic_activation=nn.GELU,
+        n_action_value_layers=2,
         cross_normalize_value=True,
         use_separate_action_value_heads=True,
         # **ge.RewardType.RANK_ON_DEATH.get_recommended_value_activation_scale_shift_dict()
     )
     model = models.FullConvActorCriticNetwork(**model_kwargs)
-    model.load_state_dict(torch.load('PRETRAINED_LOAD_PATH/cp.pt'))
+    #model.load_state_dict(torch.load('PRETRAINED_LOAD_PATH/cp.pt'))
     model.to(device=DEVICE)
+    starting_lr = 0.001
     optimizer = torch.optim.RMSprop(
         model.parameters(),
-        lr=0.001,
+        lr=starting_lr,
         alpha=0.9,
-        weight_decay=1e-5,
+        momentum=0.,
+        #eps=0.01,
+        #weight_decay=1e-5,
     )
     # NB: lr_scheduler counts steps in batches, not epochs
-    lr_scheduler = None
+    n_batches = int(2e5)
+    min_lr = starting_lr * 0.1
+    lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(
+        optimizer,
+        math.exp(math.log(min_lr / starting_lr) / n_batches)
+    )
+    #lr_scheduler = None
     env = TorchEnv(
         config=Configuration(kaggle_make('hungry_geese', debug=False).configuration),
-        n_envs=512,
+        n_envs=256,
         obs_type=obs_type,
         device=DEVICE,
     )
@@ -84,8 +115,8 @@ if __name__ == '__main__':
         ge.RewardType.RANK_ON_DEATH,
         ge.ActionMasking.OPPOSITE,
         [n_channels],
-        model_kwargs['conv_block_kwargs']
-    ) + '_v0'
+        model_kwargs.get('block_kwargs', model_kwargs.get('base_model', [None])[:-1])
+    ) + '_v3'
     exp_folder = Path(f'runs/A2C/active/GPU0_{experiment_name}')
     train_alg = A2C(
         model=model,
@@ -94,7 +125,7 @@ if __name__ == '__main__':
         env=env,
         policy_weight=1.,
         value_weight=1.,
-        entropy_weight=1e-3,
+        entropy_weight=1e-4,
         use_action_masking=True,
         use_mixed_precision=True,
         clip_grads=10.,
@@ -113,9 +144,9 @@ if __name__ == '__main__':
     """
     try:
         train_alg.train(
-            n_batches=int(1e9),
+            n_batches=n_batches,
             batch_len=5,
-            gamma=0.999
+            gamma=0.9995
         )
     except KeyboardInterrupt:
         print('KeyboardInterrupt: saving model')

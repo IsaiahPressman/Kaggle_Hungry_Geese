@@ -16,7 +16,7 @@ if __name__ == '__main__':
     action_masking = ge.ActionMasking.LETHAL
     channel_dims = [32, 64, 128]
     first_downsample = nn.AvgPool2d(2, stride=1)
-    model_kwargs = dict(conv_block_kwargs=[
+    model_kwargs = dict(block_kwargs=[
         dict(
             in_channels=obs_type.get_obs_spec()[2],
             out_channels=channel_dims[0],
@@ -110,7 +110,7 @@ if __name__ == '__main__':
                                                          reward_type,
                                                          action_masking,
                                                          channel_dims,
-                                                         model_kwargs['conv_block_kwargs']) + '_v1'
+                                                         model_kwargs['block_kwargs']) + '_v1'
     deep_q_alg = DeepQ(model, ge.VectorizedEnv(**env_kwargs), replay_buffer,
                        validation_kwargs_dicts=validation_kwargs_dicts,
                        device=DEVICE,

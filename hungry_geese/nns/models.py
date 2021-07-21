@@ -10,7 +10,7 @@ from ..config import *
 class BasicActorCriticNetwork(nn.Module):
     def __init__(
             self,
-            conv_block_kwargs: Sequence[Dict],
+            block_kwargs: Sequence[Dict],
             use_adaptive_avg_pool: bool = True,
             fc_in_channels: Optional[int] = None,
             value_activation: Optional[nn.Module] = None,
@@ -19,10 +19,10 @@ class BasicActorCriticNetwork(nn.Module):
     ):
         super(BasicActorCriticNetwork, self).__init__()
         raise NotImplementedError('Fix -inf masking')
-        self.base = ResidualModel(conv_block_kwargs)
+        self.base = ResidualModel(block_kwargs)
         if use_adaptive_avg_pool:
             self.prepare_for_fc = nn.AdaptiveAvgPool2d((1, 1))
-            fc_in_channels = conv_block_kwargs[-1]['out_channels']
+            fc_in_channels = block_kwargs[-1]['out_channels']
         else:
             self.prepare_for_fc = nn.Identity()
             if fc_in_channels is None:
@@ -78,34 +78,46 @@ class FullConvActorCriticNetwork(nn.Module):
     def __init__(
             self,
             cross_normalize_value: bool = True,
-            value_activation: Optional[nn.Module] = None,
             use_separate_action_value_heads: bool = False,
+            n_action_value_layers: int = 2,
+            preprocessing_layer: Optional[nn.Module] = None,
+            value_activation: Optional[nn.Module] = None,
             value_scale: float = 1.,
             value_shift: float = 0.,
+            base_model: Optional[nn.Module] = None,
+            base_out_channels: Optional[int] = None,
+            actor_critic_activation: Optional[nn.Module] = None,
             **residual_model_kwargs
     ):
         super(FullConvActorCriticNetwork, self).__init__()
         self.use_separate_action_value_heads = use_separate_action_value_heads
-        self.base = ResidualModel(**residual_model_kwargs)
-        self.base_out_channels = residual_model_kwargs['conv_block_kwargs'][-1]['out_channels']
-        if self.use_separate_action_value_heads:
-            self.actor = nn.Linear(self.base_out_channels, 4 * N_PLAYERS)
-            self.critic = nn.Linear(self.base_out_channels, 1 * N_PLAYERS)
+        self.preprocessing_layer = preprocessing_layer if preprocessing_layer is not None else nn.Identity()
+        if base_model is None:
+            self.base = ResidualModel(**residual_model_kwargs)
         else:
-            self.actor = nn.Linear(self.base_out_channels, 4)
-            self.critic = nn.Linear(self.base_out_channels, 1)
-        # activation = residual_model_kwargs['conv_block_kwargs'][-1].get('activation', nn.ReLU)
-        # fc_channels = int(self.base_out_channels / 4)
-        # self.actor = nn.Sequential(
-        #     nn.Linear(self.base_out_channels, fc_channels),
-        #     activation(inplace=True),
-        #     nn.Linear(fc_channels, 4)
-        # )
-        # self.critic = nn.Sequential(
-        #     nn.Linear(self.base_out_channels, fc_channels),
-        #     activation(inplace=True),
-        #     nn.Linear(fc_channels, 1)
-        # )
+            self.base = base_model
+            assert len(residual_model_kwargs.keys()) == 0, f'Unknown args: {residual_model_kwargs.keys()}'
+        if base_model is None:
+            self.base_out_channels = residual_model_kwargs['block_kwargs'][-1]['out_channels']
+            actor_critic_activation = residual_model_kwargs['block_kwargs'][-1].get('activation', nn.ReLU)
+        else:
+            self.base_out_channels = base_out_channels
+            assert actor_critic_activation is not None
+        actor_layers = []
+        critic_layers = []
+        for i in range(n_action_value_layers - 1):
+            actor_layers.append(nn.Linear(self.base_out_channels, self.base_out_channels))
+            actor_layers.append(actor_critic_activation())
+            critic_layers.append(nn.Linear(self.base_out_channels, self.base_out_channels))
+            critic_layers.append(actor_critic_activation())
+        if self.use_separate_action_value_heads:
+            actor_layers.append(nn.Linear(self.base_out_channels, 4 * N_PLAYERS))
+            critic_layers.append(nn.Linear(self.base_out_channels, 1 * N_PLAYERS))
+        else:
+            actor_layers.append(nn.Linear(self.base_out_channels, 4))
+            critic_layers.append(nn.Linear(self.base_out_channels, 1))
+        self.actor = nn.Sequential(*actor_layers)
+        self.critic = nn.Sequential(*critic_layers)
         self.cross_normalize_value = cross_normalize_value
         if self.cross_normalize_value:
             if value_activation is not None:
@@ -137,7 +149,7 @@ class FullConvActorCriticNetwork(nn.Module):
              value: Tensor of shape (batch_size, n_geese), representing the predicted value per goose
         """
         batch_size, n_geese = head_locs.shape
-        base_out = self.base(states)
+        base_out = self.base(self.preprocessing_layer(states))
         if base_out.shape[-2:] != states.shape[-2:]:
             raise RuntimeError(f'Fully convolutional networks must use padding so that the input and output sizes match'
                                f'Got input size: {states.shape} and output size: {base_out.shape}')
@@ -258,7 +270,7 @@ class FullConvActorCriticNetwork(nn.Module):
 class QModel(nn.Module):
     def __init__(
             self,
-            conv_block_kwargs: Sequence[Dict],
+            block_kwargs: Sequence[Dict],
             fc_in_channels: int,
             dueling_q: bool = False,
             use_adaptive_avg_pool: bool = True,
@@ -268,7 +280,7 @@ class QModel(nn.Module):
     ):
         super(QModel, self).__init__()
         raise NotImplementedError('Fix -inf masking')
-        self.base = ResidualModel(conv_block_kwargs)
+        self.base = ResidualModel(block_kwargs)
         self.dueling_q = dueling_q
         if use_adaptive_avg_pool:
             self.prepare_for_fc = nn.AdaptiveAvgPool2d((1, 1))

@@ -1029,7 +1029,7 @@ if __name__ == "__main__":
     activation = nn.ReLU
     model_kwargs = dict(
         block_class=conv_blocks.BasicConvolutionalBlock,
-        conv_block_kwargs=[
+        block_kwargs=[
             dict(
                 in_channels=OBS_TYPE.get_obs_spec()[-3],
                 out_channels=n_channels,

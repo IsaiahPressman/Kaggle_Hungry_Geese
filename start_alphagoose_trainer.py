@@ -19,7 +19,7 @@ if __name__ == '__main__':
     use_mhsa = False
     model_kwargs = dict(
         block_class=conv_blocks.BasicConvolutionalBlock,
-        conv_block_kwargs=[
+        block_kwargs=[
             dict(
                 in_channels=obs_type.get_obs_spec()[-3],
                 out_channels=n_channels,
@@ -95,7 +95,7 @@ if __name__ == '__main__':
                                                              ge.RewardType.RANK_ON_DEATH,
                                                              ge.ActionMasking.OPPOSITE,
                                                              [n_channels],
-                                                             model_kwargs['conv_block_kwargs']) + '_v2'
+                                                             model_kwargs['block_kwargs']) + '_v2'
     exp_folder = Path(f'runs/alphagoose/active/{experiment_name}')
     train_alg = AlphaGooseTrainer(
         model=model,

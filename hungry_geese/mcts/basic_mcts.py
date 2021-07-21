@@ -111,9 +111,11 @@ class Node:
             self.n_visits += selected_actions_mask * virtual_loss
         
     def get_puct_actions(self, c_puct: float) -> np.ndarray:
+        parent_visits = self.n_visits.sum(axis=1, keepdims=True)
+        parent_visits = np.maximum(parent_visits, np.ones_like(parent_visits))
         uct_vals = self.q_vals + (c_puct *
                                   self.initial_policies *
-                                  np.sqrt(self.n_visits.sum(axis=1, keepdims=True)) / (1. + self.n_visits))
+                                  np.sqrt(parent_visits) / (1. + self.n_visits))
         uct_vals = np.where(
             self.available_actions_masks,
             uct_vals,

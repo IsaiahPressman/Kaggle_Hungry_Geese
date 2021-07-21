@@ -23,7 +23,7 @@ if __name__ == '__main__':
     use_mhsa = False
     model_kwargs = dict(
         block_class=conv_blocks.BasicConvolutionalBlock,
-        conv_block_kwargs=[
+        block_kwargs=[
             dict(
                 in_channels=obs_type.get_obs_spec()[-3],
                 out_channels=n_channels,
@@ -106,7 +106,7 @@ if __name__ == '__main__':
         obs_type,
         transform=transforms.Compose([
             alphagoose_data.PretrainRandomReflect(obs_type),
-            alphagoose_data.PretrainChannelShuffle(obs_type),
+            alphagoose_data.ChannelShuffle(obs_type),
             alphagoose_data.ToTensor()
         ]),
         include_episode=lambda x: x.stem in train_episodes
@@ -132,7 +132,7 @@ if __name__ == '__main__':
                                                                          ge.RewardType.RANK_ON_DEATH,
                                                                          ge.ActionMasking.NONE,
                                                                          [n_channels],
-                                                                         model_kwargs['conv_block_kwargs']) + '_v8'
+                                                                         model_kwargs['block_kwargs']) + '_v8'
     exp_folder = Path(f'runs/supervised_pretraining/active/{experiment_name}')
     train_alg = SupervisedPretraining(
         model=model,

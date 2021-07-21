@@ -401,11 +401,11 @@ def create_obs_tensor(observation, obs_type):
             if len(goose_loc_list) > 0:
                 head_loc = row_col(goose_loc_list[0])
                 player_channels[channel_idx_base + idx_dict['contains_head'],
-                                (*head_loc)] = 1.
+                                head_loc[0], head_loc[1]] = 1.
                 for i, body_loc_n in enumerate(goose_loc_list[::-1]):
                     body_loc = row_col(body_loc_n)
                     player_channels[channel_idx_base + idx_dict['contains_body'],
-                                    (*body_loc)] = (i + 1.) / GOOSE_MAX_LEN
+                                    body_loc[0], body_loc[1]] = (i + 1.) / GOOSE_MAX_LEN
         obs = np.concatenate([
             player_channels,
             contains_food,
@@ -451,14 +451,14 @@ def create_obs_tensor(observation, obs_type):
             if len(goose_loc_list) > 0:
                 head_loc = row_col(goose_loc_list[0])
                 player_channels[channel_idx_base + idx_dict['contains_head'],
-                                (*head_loc)] = 1.
+                                head_loc[0], head_loc[1]] = 1.
                 tail_loc = row_col(goose_loc_list[-1])
                 player_channels[channel_idx_base + idx_dict['contains_tail'],
-                                (*tail_loc)] = 1.
+                                tail_loc[0], tail_loc[1]] = 1.
                 for i, body_loc_n in enumerate(goose_loc_list[::-1]):
                     body_loc = row_col(body_loc_n)
                     player_channels[channel_idx_base + idx_dict['contains_body'],
-                                    (*body_loc)] = (i + 1.) / GOOSE_MAX_LEN
+                                    body_loc[0], body_loc[1]] = (i + 1.) / GOOSE_MAX_LEN
         obs = np.concatenate([
             player_channels,
             contains_food,
@@ -505,18 +505,19 @@ def create_obs_tensor(observation, obs_type):
             # Make sure the goose is still alive
             if len(goose_loc_list) > 0:
                 head_loc = row_col(goose_loc_list[0])
-                player_channels[channel_idx_base + idx_dict['contains_head'], (*head_loc)] = 1.
+                player_channels[channel_idx_base + idx_dict['contains_head'], head_loc[0], head_loc[1]] = 1.
                 tail_loc = row_col(goose_loc_list[-1])
-                player_channels[channel_idx_base + idx_dict['contains_tail'], (*tail_loc)] = 1.
+                player_channels[channel_idx_base + idx_dict['contains_tail'], tail_loc[0], tail_loc[1]] = 1.
                 if observation[0]['observation']['step'] > 0:
                     reverse_action = Action[observation[agent_idx]['action']].opposite()
                     last_head_pos = (goose_loc_list[0] + _ACTION_TO_MOVE_DICT[reverse_action]) % (N_ROWS * N_COLS)
                     last_head_loc = row_col(last_head_pos)
-                    player_channels[channel_idx_base + idx_dict['last_head_loc'], (*last_head_loc)] = 1.
+                    player_channels[channel_idx_base + idx_dict['last_head_loc'],
+                                    last_head_loc[0], last_head_loc[1]] = 1.
                 for i, body_loc_n in enumerate(goose_loc_list[::-1]):
                     body_loc = row_col(body_loc_n)
                     player_channels[channel_idx_base + idx_dict['contains_body'],
-                                    (*body_loc)] = (i + 1.) / GOOSE_MAX_LEN
+                                    body_loc[0], body_loc[1]] = (i + 1.) / GOOSE_MAX_LEN
         obs = np.concatenate([
             player_channels,
             contains_food,
@@ -560,18 +561,18 @@ def create_obs_tensor(observation, obs_type):
             if len(goose_loc_list) > 0:
                 head_loc = row_col(goose_loc_list[0])
                 player_channels[channel_idx_base + idx_dict['contains_head'],
-                                (*head_loc)] = 1.
+                                head_loc[0], head_loc[1]] = 1.
             # Check if the goose has a tail
             if len(goose_loc_list) > 1:
                 tail_loc = row_col(goose_loc_list[-1])
                 player_channels[channel_idx_base + idx_dict['contains_tail'],
-                                (*tail_loc)] = 1.
+                                tail_loc[0], tail_loc[1]] = 1.
             # Check if the goose is more than just a head and tail
             if len(goose_loc_list) > 2:
                 for body_loc_n in goose_loc_list[1:-1]:
                     body_loc = row_col(body_loc_n)
                     player_channels[channel_idx_base + idx_dict['contains_body'],
-                                    (*body_loc)] = 1.
+                                    body_loc[0], body_loc[1]] = 1.
         obs = np.concatenate([
             player_channels,
             contains_food,
@@ -653,7 +654,7 @@ def create_obs_tensor(observation, obs_type):
                     head_loc = row_col(goose_loc_list[0])
                     player_channels[main_agent_idx,
                                     channel_idx_base + idx_dict['contains_head'],
-                                    (*head_loc)] = 1.
+                                    head_loc[0], head_loc[1]] = 1.
                     goose_len = float(len(goose_loc_list))
                     player_channels[main_agent_idx,
                                     channel_idx_base + idx_dict['goose_length']] = goose_len / (N_ROWS * N_COLS)
@@ -667,7 +668,7 @@ def create_obs_tensor(observation, obs_type):
                         body_loc = row_col(body_loc_n)
                         player_channels[main_agent_idx,
                                         channel_idx_base + idx_dict['contains_body'],
-                                        (*body_loc)] = 1.
+                                        body_loc[0], body_loc[1]] = 1.
                     for i in range(len(goose_loc_list) - 1):
                         connection_channel = connected_dict[_get_direction(
                             goose_loc_list[i],
@@ -676,7 +677,7 @@ def create_obs_tensor(observation, obs_type):
                         body_loc = row_col(goose_loc_list[i])
                         player_channels[main_agent_idx,
                                         channel_idx_base + idx_dict[connection_channel],
-                                        (*body_loc)] = 1.
+                                        body_loc[0], body_loc[1]] = 1.
                         next_connection_channel = connected_dict[_get_direction(
                             goose_loc_list[i + 1],
                             goose_loc_list[i]
@@ -684,7 +685,7 @@ def create_obs_tensor(observation, obs_type):
                         next_body_loc = row_col(goose_loc_list[i + 1])
                         player_channels[main_agent_idx,
                                         channel_idx_base + idx_dict[next_connection_channel],
-                                        (*next_body_loc)] = 1.
+                                        next_body_loc[0], next_body_loc[1]] = 1.
         obs = np.concatenate([
             player_channels,
             contains_food,
@@ -751,20 +752,20 @@ def create_obs_tensor(observation, obs_type):
                     head_loc = row_col(goose_loc_list[0])
                     player_channels[main_agent_idx,
                                     channel_idx_base + idx_dict['contains_head'],
-                                    (*head_loc)] = 1.
+                                    head_loc[0], head_loc[1]] = 1.
                 # Check if the goose has a tail
                 if len(goose_loc_list) > 1:
                     tail_loc = row_col(goose_loc_list[-1])
                     player_channels[main_agent_idx,
                                     channel_idx_base + idx_dict['contains_tail'],
-                                    (*tail_loc)] = 1.
+                                    tail_loc[0], tail_loc[1]] = 1.
                 # Check if the goose is more than just a head and tail
                 if len(goose_loc_list) > 2:
                     for body_loc_n in goose_loc_list[1:-1]:
                         body_loc = row_col(body_loc_n)
                         player_channels[main_agent_idx,
                                         channel_idx_base + idx_dict['contains_body'],
-                                        (*body_loc)] = 1.
+                                        body_loc[0], body_loc[1]] = 1.
         obs = np.concatenate([
             player_channels,
             contains_food,
@@ -845,28 +846,29 @@ def create_obs_tensor(observation, obs_type):
                 # Make sure the goose is still alive
                 if len(goose_loc_list) > 0:
                     head_loc = row_col(goose_loc_list[0])
-                    contains_head[centered_agent_idx, (*head_loc)] = 1. * is_centered_multiplier
+                    contains_head[centered_agent_idx, head_loc[0], head_loc[1]] = 1. * is_centered_multiplier
                     if observation[0]['observation']['step'] > 0:
                         last_action_channel = last_action_dict[observation[agent_idx]['action']]
-                        last_action_channel[centered_agent_idx, (*head_loc)] = 1. * is_centered_multiplier
+                        last_action_channel[centered_agent_idx, head_loc[0], head_loc[1]] = 1. * is_centered_multiplier
                 # Make sure the goose is more than just a head
                 if len(goose_loc_list) > 1:
                     for body_loc_n in goose_loc_list[1:]:
                         body_loc = row_col(body_loc_n)
-                        contains_body[centered_agent_idx, (*body_loc)] = 1. * is_centered_multiplier
+                        contains_body[centered_agent_idx, body_loc[0], body_loc[1]] = 1. * is_centered_multiplier
                     for i in range(len(goose_loc_list) - 1):
                         connection_channel = connected_dict[_get_direction(
                             goose_loc_list[i],
                             goose_loc_list[i + 1]
                         )]
                         body_loc = row_col(goose_loc_list[i])
-                        connection_channel[centered_agent_idx, (*body_loc)] = 1. * is_centered_multiplier
+                        connection_channel[centered_agent_idx, body_loc[0], body_loc[1]] = 1. * is_centered_multiplier
                         next_connection_channel = connected_dict[_get_direction(
                             goose_loc_list[i + 1],
                             goose_loc_list[i]
                         )]
                         next_body_loc = row_col(goose_loc_list[i + 1])
-                        next_connection_channel[centered_agent_idx, (*next_body_loc)] = 1. * is_centered_multiplier
+                        next_connection_channel[centered_agent_idx,
+                                                next_body_loc[0], next_body_loc[1]] = 1. * is_centered_multiplier
         obs = np.stack([
             contains_head,
             contains_food,

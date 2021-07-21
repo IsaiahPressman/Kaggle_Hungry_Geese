@@ -182,7 +182,16 @@ class A2C:
                 self.summary_writer.add_scalar(f'Results/mean_{name}',
                                                np.concatenate(value).mean().item(),
                                                self.batch_counter)
-        self.summary_writer.add_scalar('Results/total_games_played', self.game_counter, self.batch_counter)
+        if self.lr_scheduler is not None:
+            last_lr = self.lr_scheduler.get_last_lr()
+            assert len(last_lr) == 1, 'Logging per-parameter LR still needs support'
+            last_lr = last_lr[0]
+        else:
+            last_lr = self.optimizer.param_groups[0]['lr']
+        self.summary_writer.add_scalar(f'Misc/learning_rate',
+                                       last_lr,
+                                       self.batch_counter)
+        self.summary_writer.add_scalar('Misc/total_games_played', self.game_counter, self.batch_counter)
         self.summary_writer.add_scalar('Time/batch_step_time_s',
                                        time.time() - batch_start_time,
                                        self.batch_counter)
@@ -329,12 +338,14 @@ class A2C:
         # Save model params as cp.pt and model + optimizer params as full_cp.pt
         self.model.cpu()
         torch.save(self.model.state_dict(), save_dir / 'cp.pt')
-        torch.save({
-            'batch_counter': self.batch_counter,
-            'model': self.model.state_dict(),
-            'optimizer': self.optimizer.state_dict(),
-            'lr_scheduler': self.lr_scheduler.state_dict() if self.lr_scheduler is not None else None
-        }, save_dir / 'full_cp.pt')
+        with warnings.catch_warnings():
+            warnings.filterwarnings('ignore', category=UserWarning)
+            torch.save({
+                'batch_counter': self.batch_counter,
+                'model': self.model.state_dict(),
+                'optimizer': self.optimizer.state_dict(),
+                'lr_scheduler': self.lr_scheduler.state_dict() if self.lr_scheduler is not None else None
+            }, save_dir / 'full_cp.pt')
         self.model.to(device=self.env.device)
 
     def load_checkpoint(self, load_dir: Union[str, Path]) -> NoReturn:

@@ -1,6 +1,8 @@
+from ..config import *
 import torch
 from torch import nn
 import torch.nn.functional as F
+from typing import *
 
 
 class RelPosSelfAttention(nn.Module):
@@ -130,3 +132,44 @@ class MHSA(nn.Module):
 
         o = self.self_attention(q=q, k=k, v=v).permute(0, 3, 1, 2)
         return o
+
+
+class BasicAttentionBlock(nn.Module):
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        mhsa_heads: int,
+        normalize: bool = False,
+        activation: Callable = nn.ReLU
+    ):
+        super(BasicAttentionBlock, self).__init__()
+
+        self.norm1 = nn.LayerNorm([in_channels, N_ROWS, N_COLS]) if normalize else nn.Identity()
+        self.mhsa = MHSA(
+            in_channels=in_channels,
+            heads=mhsa_heads,
+            curr_h=N_ROWS,
+            curr_w=N_COLS
+        )
+
+        self.norm2 = nn.LayerNorm([in_channels, N_ROWS, N_COLS]) if normalize else nn.Identity()
+        self.mlp = nn.Sequential(
+            nn.Conv2d(
+                in_channels=in_channels,
+                out_channels=out_channels,
+                kernel_size=(1, 1)
+            ),
+            activation(),
+            nn.Conv2d(
+                in_channels=out_channels,
+                out_channels=out_channels,
+                kernel_size=(1, 1)
+            )
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        identity = x
+        x = self.mhsa(self.norm1(x))
+        x = x + identity
+        return self.mlp(self.norm2(x)) + x

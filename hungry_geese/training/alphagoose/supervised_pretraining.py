@@ -252,7 +252,7 @@ class SupervisedPretraining:
                 self.summary_writer.add_histogram(
                     f'Parameters/{name}',
                     param.detach().cpu().clone().numpy(),
-                    self.epoch_counter // self.checkpoint_freq
+                    self.epoch_counter
                 )
         checkpoint_dir = self.exp_folder / f'{self.epoch_counter:04}'
         checkpoint_dir.mkdir()
@@ -263,6 +263,7 @@ class SupervisedPretraining:
                                        int(self.epoch_counter / self.checkpoint_freq))
 
     def render_n_games(self, checkpoint_dir: Path) -> NoReturn:
+        self.model.eval()
         if self.checkpoint_render_n_games > 0:
             save_dir = checkpoint_dir / 'replays'
             save_dir.mkdir()
@@ -304,6 +305,7 @@ class SupervisedPretraining:
                                 break
                     s, _, _, info_dict = rendering_env.soft_reset()
                     s = torch.from_numpy(s)
+        self.model.train()
 
     def save(self, save_dir: Union[str, Path], finished: bool = False) -> NoReturn:
         save_dir = Path(save_dir)

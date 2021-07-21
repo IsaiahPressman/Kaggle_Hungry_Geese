@@ -113,12 +113,12 @@ def format_experiment_name(obs_type,
                            reward_type,
                            action_masking,
                            channel_dims: Sequence[int],
-                           conv_block_kwargs: Sequence[Dict]):
+                           blocks: Sequence):
     experiment_name = ''
     experiment_name += f'{obs_type.name.lower()}_'
     experiment_name += f'{reward_type.name.lower()}_'
     experiment_name += f'{action_masking.name.lower()}_'
-    experiment_name += f'{len(conv_block_kwargs)}_blocks_'
+    experiment_name += f'{len(blocks)}_blocks_'
     experiment_name += '_'.join([str(c) for c in channel_dims]) + '_dims'
     return experiment_name
 

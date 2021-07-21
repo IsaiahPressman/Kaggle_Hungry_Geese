@@ -22,7 +22,7 @@ def main():
     use_mhsa = False
     model_kwargs = dict(
         block_class=conv_blocks.BasicConvolutionalBlock,
-        conv_block_kwargs=[
+        block_kwargs=[
             dict(
                 in_channels=obs_type.get_obs_spec()[-3],
                 out_channels=n_channels,
@@ -67,7 +67,7 @@ def main():
                                                              ge.RewardType.RANK_ON_DEATH,
                                                              ge.ActionMasking.OPPOSITE,
                                                              [n_channels],
-                                                             model_kwargs['conv_block_kwargs']) + '_v2'
+                                                             model_kwargs['block_kwargs']) + '_v2'
     weights_dir = Path(
         f'runs/alphagoose/active/{experiment_name}/all_checkpoints_pt'
     )

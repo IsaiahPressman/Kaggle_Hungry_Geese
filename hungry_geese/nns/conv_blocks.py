@@ -1,9 +1,9 @@
-from ..config import *
-from typing import Callable, Union, Sequence, Dict
+from typing import *
 import torch
 from torch import nn
 
-from .attn_blocks import MHSA
+from ..config import *
+from .attn_blocks import MHSA, BasicAttentionBlock
 
 
 class BasicConvolutionalBlock(nn.Module):
@@ -39,14 +39,8 @@ class BasicConvolutionalBlock(nn.Module):
         )]
         if normalize:
             layers.append(nn.BatchNorm2d(out_channels))
-        layers.append(activation(inplace=True))
-        if use_mhsa:
-            layers.append(MHSA(
-                in_channels=out_channels,
-                heads=mhsa_heads,
-                curr_h=N_ROWS,
-                curr_w=N_COLS
-            ))
+            nn.init.constant_(layers[-1].weight, 1)
+        layers.append(activation())
 
         for i in range(n_layers - 1):
             layers.append(nn.Conv2d(
@@ -59,9 +53,22 @@ class BasicConvolutionalBlock(nn.Module):
             ))
             if normalize:
                 layers.append(nn.BatchNorm2d(out_channels))
-            layers.append(activation(inplace=True))
-        # Remove final activation layer - to be applied after residual connection
-        layers = layers[:-1]
+                if i < n_layers - 1:
+                    nn.init.constant_(layers[-1].weight, 1)
+                else:
+                    # Initialize final normalization layer to 0
+                    nn.init.constant_(layers[-1].weight, 0)
+            # Remove final activation layer - to be applied after residual connection
+            if i < n_layers - 1:
+                layers.append(activation())
+        if use_mhsa:
+            layers.append(activation())
+            layers.append(MHSA(
+                in_channels=out_channels,
+                heads=mhsa_heads,
+                curr_h=N_ROWS,
+                curr_w=N_COLS
+            ))
         layers.append(downsample)
         self.layers = nn.Sequential(*layers)
 
@@ -90,30 +97,32 @@ class SELayer(nn.Module):
 class ResidualModel(nn.Module):
     def __init__(
             self,
-            block_class: Union[BasicConvolutionalBlock],
-            conv_block_kwargs: Sequence[Dict],
+            block_class: Union[BasicConvolutionalBlock, BasicAttentionBlock],
+            block_kwargs: Sequence[Dict],
             squeeze_excitation: bool = True,
+            postprocessing_layer: Optional[nn.Module] = None,
     ):
         super(ResidualModel, self).__init__()
-        assert len(conv_block_kwargs) >= 1
-        self.conv_blocks = nn.ModuleList()
+        assert len(block_kwargs) >= 1
+        self.blocks = nn.ModuleList()
         self.change_n_channels = nn.ModuleList()
         self.downsamplers = nn.ModuleList()
         self.se_layers = nn.ModuleList()
         self.activations = nn.ModuleList()
-        for kwargs in conv_block_kwargs:
-            self.conv_blocks.append(block_class(**kwargs))
+        self.postprocessing_layer = postprocessing_layer if postprocessing_layer is not None else nn.Identity()
+        for kwargs in block_kwargs:
+            self.blocks.append(block_class(**kwargs))
             if kwargs['in_channels'] != kwargs['out_channels']:
                 self.change_n_channels.append(nn.Conv2d(kwargs['in_channels'], kwargs['out_channels'], 1))
             else:
                 self.change_n_channels.append(nn.Identity())
             self.downsamplers.append(kwargs.get('downsample', nn.Identity()))
             self.se_layers.append(SELayer(kwargs['out_channels']) if squeeze_excitation else nn.Identity())
-            self.activations.append(kwargs.get('activation', nn.ReLU)(inplace=True))
+            self.activations.append(kwargs.get('activation', nn.ReLU)())
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         for cb, cnc, d, se, a in zip(
-            self.conv_blocks,
+            self.blocks,
             self.change_n_channels,
             self.downsamplers,
             self.se_layers,
@@ -123,4 +132,4 @@ class ResidualModel(nn.Module):
             x = se(cb(x))
             x = x + d(cnc(identity))
             x = a(x)
-        return x
+        return self.postprocessing_layer(x)
