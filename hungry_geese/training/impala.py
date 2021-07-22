@@ -1,3 +1,4 @@
+import copy
 from kaggle_environments import make
 import os
 from pathlib import Path
@@ -21,6 +22,7 @@ from ..nns.models import FullConvActorCriticNetwork
 from . import vtrace
 
 Buffers = Dict[str, torch.Tensor]
+NON_BLOCKING = False
 
 
 class Batch(NamedTuple):
@@ -116,37 +118,21 @@ def env_out_to_dict(
         env_out: tuple[torch.Tensor, torch.Tensor, torch.Tensor]
 ) -> dict[str, torch.Tensor]:
     return {
-        'states': env_out[0],
-        'head_locs': env.head_locs,
-        'alive_before_act': alive_before_act,
-        'available_actions_mask': env.get_available_action_masks(),
-        'reward': env_out[1],
-        'alive_after_act': ~env_out[2]
+        'states': env_out[0].clone(),
+        'head_locs': env.head_locs.clone(),
+        'alive_before_act': alive_before_act.clone(),
+        'available_actions_mask': env.get_available_action_masks().clone(),
+        'reward': env_out[1].clone(),
+        'alive_after_act': ~env_out[2].clone()
     }
 
 
 def agent_out_to_dict(model: FullConvActorCriticNetwork, obs: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
-    try:
-        actions, (log_probs, values) = model.sample_action(train=True, **obs)
-    except ValueError as e:
-        logits, values = model.forward(
-            states=obs['states'],
-            head_locs=obs['head_locs'],
-            still_alive=obs['still_alive']
-        )
-        print(f'Nan logits: {torch.isnan(logits).any()}')
-        print(f'Nan probs: {torch.isnan(F.softmax(logits, -1)).any()}')
-        nan_mask = torch.isnan(F.softmax(logits, -1)).any(dim=-1).any(dim=-1)
-        print(obs['head_locs'][nan_mask])
-        print(obs['still_alive'][nan_mask])
-        print(obs['states'][nan_mask])
-        print(obs['states'].shape)
-        print(torch.isneginf(obs['states']).any(dim=0).any(dim=-1).any(dim=-1))
-        raise e
+    actions, (log_probs, values) = model.sample_action(train=True, **obs)
     return {
-        'actions': actions,
-        'log_probs': log_probs,
-        'baseline': values
+        'actions': actions.clone(),
+        'log_probs': log_probs.clone(),
+        'baseline': values.clone()
     }
 
 
@@ -161,7 +147,7 @@ def extract_obs(tensor_dict: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]
 
 
 def to_cpu(t: torch.Tensor) -> torch.Tensor:
-    return t.to(device=torch.device('cpu'), non_blocking=True)
+    return t.to(device=torch.device('cpu'), non_blocking=NON_BLOCKING)
 
 
 def create_buffers(flags: Flags) -> tuple[Buffers, Buffers]:
@@ -206,7 +192,7 @@ def get_batches(
         time.sleep(0.25)
 
     batches = []
-    read_idx = train_buffers['read_index'] % flags.num_buffers
+    read_idx = train_buffers['read_index'].item() % flags.num_buffers
     time_slice_start = read_idx * (flags.batch_len + 1)
     time_slice_end = (read_idx + 1) * (flags.batch_len + 1)
     for batch_slice in range(0, flags.n_envs, flags.batch_size):
@@ -216,7 +202,7 @@ def get_batches(
                      time_slice_start:time_slice_end,
                      batch_slice:(batch_slice + flags.batch_size),
                      ...
-                     ] for key in Batch._fields
+                     ].clone() for key in Batch._fields
             }
         ))
     train_buffers['read_index'] += 1
@@ -239,7 +225,7 @@ def actor(
 
         while True:
             if train_buffers['write_index'] - train_buffers['read_index'] > flags.max_queue_len:
-                time.sleep(1.)
+                time.sleep(0.25)
                 continue
 
             write_index = (train_buffers['write_index'].item() % flags.num_buffers) * (flags.batch_len + 1)
@@ -248,10 +234,12 @@ def actor(
                 break
 
             # Write old rollout end
+            # torch.cuda.synchronize(flags.actor_device)
             for key in env_output:
                 train_buffers[key][write_index, ...] = to_cpu(env_output[key])
             for key in agent_output:
                 train_buffers[key][write_index, ...] = to_cpu(agent_output[key])
+            # torch.cuda.synchronize(flags.actor_device)
 
             # Do new rollout
             game_length_buffer, final_goose_length_buffer, winning_goose_length_buffer = [], [], []
@@ -260,13 +248,13 @@ def actor(
                     agent_output = agent_out_to_dict(model, extract_obs(env_output))
 
                 alive_before_act = env.alive.clone()
-                torch.cuda.synchronize(flags.actor_device)
+                # torch.cuda.synchronize(flags.actor_device)
                 env_output = env_out_to_dict(
                     env,
                     alive_before_act,
-                    env.step(agent_output['actions'], get_reward_and_dead=True)
+                    env.step(agent_output['actions'].clone(), get_reward_and_dead=True)
                 )
-                torch.cuda.synchronize(flags.actor_device)
+                # torch.cuda.synchronize(flags.actor_device)
                 if env.dones.any():
                     game_length_buffer.append(to_cpu(env.step_counters[env.dones].view(-1)))
                     final_goose_lengths = env.rewards[env.dones] % (env.max_len + 1)
@@ -278,13 +266,13 @@ def actor(
                     log_buffers['game_counter'][log_write_index] = log_buffers['game_counter'][log_write_index - 1] + \
                                                                    env.dones.sum().cpu()
                     env.reset()
-                    torch.cuda.synchronize(flags.actor_device)
+                    # torch.cuda.synchronize(flags.actor_device)
                     env_output['states'] = env.obs
                     env_output['head_locs'] = env.head_locs
                     env_output['alive_before_act'] = env.alive
                     env_output['available_actions_mask'] = env.get_available_action_masks()
 
-                torch.cuda.synchronize(flags.actor_device)
+                # torch.cuda.synchronize(flags.actor_device)
                 for key in env_output:
                     train_buffers[key][write_index + t + 1, ...] = to_cpu(env_output[key])
                 for key in agent_output:
@@ -304,6 +292,7 @@ def actor(
                     log_buffers[f'Results/mean_{name}'][log_write_index] = float('nan')
 
             train_buffers['write_index'][0] += 1
+            # torch.cuda.synchronize(flags.actor_device)
     except KeyboardInterrupt:
         pass
     finally:
@@ -330,9 +319,9 @@ class Impala:
     ):
         flags.validate_flags()
         self.flags = flags
-        self.learner_model = FullConvActorCriticNetwork(**model_kwargs).to(flags.learner_device)
+        self.learner_model = FullConvActorCriticNetwork(**copy.deepcopy(model_kwargs)).to(flags.learner_device)
         self.learner_model.train()
-        self.actor_model = FullConvActorCriticNetwork(**model_kwargs).to(flags.actor_device)
+        self.actor_model = FullConvActorCriticNetwork(**copy.deepcopy(model_kwargs)).to(flags.actor_device)
         self.actor_model.eval()
         self.actor_model.share_memory()
         self.optimizer = optimizer_class(
@@ -437,11 +426,12 @@ class Impala:
         batch_start_time = time.time()
 
         batch = Batch(**{
-            key: val.to(self.flags.learner_device, non_blocking=True) for key, val in batch._asdict().items()
+            key: val.to(self.flags.learner_device, non_blocking=NON_BLOCKING) for key, val in batch._asdict().items()
         })
         obs = {
             key: torch.flatten(val, 0, 1) for key, val in extract_obs(batch._asdict()).items()
         }
+        # torch.cuda.synchronize(self.flags.learner_device)
         learner_outputs = agent_out_to_dict(self.learner_model, obs)
         learner_outputs = {
             key: val.view(self.flags.batch_len + 1, self.flags.batch_size, *val.shape[1:])
@@ -458,6 +448,7 @@ class Impala:
 
         discounts = batch.alive_after_act.float() * self.flags.gamma
 
+        # torch.cuda.synchronize(self.flags.learner_device)
         vtrace_returns = vtrace.from_log_probs(
             behavior_policy_log_probs=batch.log_probs,
             target_policy_log_probs=learner_outputs['log_probs'],
@@ -516,7 +507,7 @@ class Impala:
             'entropy_loss': entropy_loss.detach().cpu().item(),
             'total_loss': total_loss.detach().cpu().item(),
         })
-        self.summary_writer.add_scalar('Time/batch', time.time() - batch_start_time, self.batch_counter)
+        self.summary_writer.add_scalar('Time/batch_s', time.time() - batch_start_time, self.batch_counter)
 
     def log_losses(self, log_dict: Dict[str, float]) -> NoReturn:
         for key, val in log_dict.items():
@@ -530,10 +521,10 @@ class Impala:
             initial_start_time: float,
             new_batches: bool
     ) -> NoReturn:
-        read_idx = train_buffers['read_index'].item() % self.flags.num_buffers
+        log_read_idx = train_buffers['read_index'].item() % self.flags.num_buffers
         # Game stats
         if new_batches:
-            game_counter = log_buffers['game_counter'][read_idx].item()
+            game_counter = log_buffers['game_counter'][log_read_idx].item()
             self.summary_writer.add_scalar('Misc/total_games_played',
                                            game_counter,
                                            self.batch_counter)
@@ -546,7 +537,7 @@ class Impala:
                                            self.batch_counter
                                            )
             if game_counter > 0:
-                self.summary_writer.add_scalar('Time/game',
+                self.summary_writer.add_scalar('Time/game_s',
                                                (time.time() - initial_start_time) / game_counter,
                                                self.batch_counter)
 
@@ -569,8 +560,8 @@ class Impala:
             for key, val in log_buffers.items():
                 if key == 'game_counter':
                     continue
-                if not torch.isnan(val[read_idx]).item():
-                    self.summary_writer.add_scalar(key, val[read_idx].item(), self.batch_counter)
+                if not torch.isnan(val[log_read_idx]).item():
+                    self.summary_writer.add_scalar(key, val[log_read_idx].item(), self.batch_counter)
 
     def checkpoint(self) -> NoReturn:
         checkpoint_start_time = time.time()
@@ -585,7 +576,7 @@ class Impala:
         checkpoint_dir.mkdir()
         self.render_n_games(checkpoint_dir)
         self.save(checkpoint_dir)
-        self.summary_writer.add_scalar('Time/checkpoint_time_s',
+        self.summary_writer.add_scalar('Time/checkpoint_s',
                                        (time.time() - checkpoint_start_time),
                                        int(self.batch_counter / self.checkpoint_freq))
 

@@ -3,21 +3,26 @@ import io
 # Silence "Loading environment football failed: No module named 'gfootball'" message
 with redirect_stdout(io.StringIO()):
     import kaggle_environments
+import os
 from pathlib import Path
+import shutil
 import torch
 from torch import nn
 
+from hungry_geese.config import N_ROWS, N_COLS
 from hungry_geese.nns import conv_blocks
 import hungry_geese.env.goose_env as ge
 from hungry_geese.training.impala import Flags, Impala
 from hungry_geese.utils import format_experiment_name
 
+os.environ["OMP_NUM_THREADS"] = "1"
+
 if __name__ == '__main__':
     obs_type = ge.ObsType.COMBINED_GRADIENT_OBS_FULL
-    n_channels = 64
+    n_channels = 92
     activation = nn.ReLU
     normalize = False
-    use_preprocessing = False
+    use_preprocessing = True
     model_kwargs = dict(
         preprocessing_layer=nn.Sequential(
             nn.Conv2d(
@@ -63,28 +68,71 @@ if __name__ == '__main__':
                 activation=activation,
                 normalize=normalize,
             ),
+            dict(
+                in_channels=n_channels,
+                out_channels=n_channels,
+                kernel_size=3,
+                activation=activation,
+                normalize=normalize,
+            ),
+            dict(
+                in_channels=n_channels,
+                out_channels=n_channels,
+                kernel_size=3,
+                activation=activation,
+                normalize=normalize,
+            ),
+            dict(
+                in_channels=n_channels,
+                out_channels=n_channels,
+                kernel_size=3,
+                activation=activation,
+                normalize=normalize,
+            ),
+            dict(
+                in_channels=n_channels,
+                out_channels=n_channels,
+                kernel_size=3,
+                activation=activation,
+                normalize=normalize,
+            ),
+            dict(
+                in_channels=n_channels,
+                out_channels=n_channels,
+                kernel_size=3,
+                activation=activation,
+                normalize=normalize,
+            ),
+            dict(
+                in_channels=n_channels,
+                out_channels=n_channels,
+                kernel_size=3,
+                activation=activation,
+                normalize=normalize,
+            ),
         ],
         n_action_value_layers=2,
         squeeze_excitation=True,
         cross_normalize_value=True,
         use_separate_action_value_heads=True,
+        # **ge.RewardType.RANK_ON_DEATH.get_recommended_value_activation_scale_shift_dict()
     )
 
     flags = Flags(
         # env params
-        n_envs=2048,
+        n_envs=512,
         obs_type=obs_type,
 
         # actor params
-        batch_len=5,
+        batch_len=20,
         use_action_masking=True,
         actor_device=torch.device('cuda:1'),
         num_buffers=15,
-        max_queue_len=3,
+        max_queue_len=2,
 
         # learner params
-        n_batches=100_000,
-        batch_size=512,
+        n_batches=200_000,
+        batch_size=64,
         gamma=0.9995,
         baseline_cost=1.,
         entropy_cost=2e-3,
@@ -126,6 +174,8 @@ if __name__ == '__main__':
         checkpoint_freq=20.,
         checkpoint_render_n_games=5,
     )
+    this_script = Path(__file__).absolute()
+    shutil.copy(this_script, train_alg.exp_folder / f'_{this_script.name}')
 
     try:
         train_alg.train()
