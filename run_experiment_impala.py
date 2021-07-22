@@ -79,8 +79,8 @@ if __name__ == '__main__':
         batch_len=5,
         use_action_masking=True,
         actor_device=torch.device('cuda:1'),
-        num_buffers=10,
-        max_queue_len=5,
+        num_buffers=15,
+        max_queue_len=3,
 
         # learner params
         n_batches=100_000,

@@ -260,6 +260,7 @@ def actor(
                     agent_output = agent_out_to_dict(model, extract_obs(env_output))
 
                 alive_before_act = env.alive.clone()
+                torch.cuda.synchronize(flags.actor_device)
                 env_output = env_out_to_dict(
                     env,
                     alive_before_act,
@@ -283,6 +284,7 @@ def actor(
                     env_output['alive_before_act'] = env.alive
                     env_output['available_actions_mask'] = env.get_available_action_masks()
 
+                torch.cuda.synchronize(flags.actor_device)
                 for key in env_output:
                     train_buffers[key][write_index + t + 1, ...] = to_cpu(env_output[key])
                 for key in agent_output:
@@ -417,8 +419,8 @@ class Impala:
                 buffered_batches = (train_buffers['write_index'] - train_buffers['read_index']) * \
                                    self.flags.n_envs / self.flags.batch_size
                 self.log_misc(
+                    train_buffers,
                     log_buffers,
-                    train_buffers['read_index'].item() % self.flags.num_buffers,
                     buffered_batches + len(batches),
                     initial_start_time,
                     need_new_batches
@@ -486,10 +488,6 @@ class Impala:
         )
         total_loss = pg_loss + baseline_loss + entropy_loss
 
-        assert not torch.isnan(pg_loss)
-        assert not torch.isnan(baseline_loss)
-        assert not torch.isnan(entropy_loss)
-
         self.optimizer.zero_grad()
         if self.flags.use_mixed_precision:
             self.grad_scaler.scale(total_loss).backward()
@@ -526,12 +524,13 @@ class Impala:
 
     def log_misc(
             self,
+            train_buffers: Buffers,
             log_buffers: Buffers,
-            read_idx: int,
             n_batches_queued: int,
             initial_start_time: float,
             new_batches: bool
     ) -> NoReturn:
+        read_idx = train_buffers['read_index'].item() % self.flags.num_buffers
         # Game stats
         if new_batches:
             game_counter = log_buffers['game_counter'][read_idx].item()
@@ -541,6 +540,11 @@ class Impala:
             self.summary_writer.add_scalar('Misc/games_per_second',
                                            game_counter / (time.time() - initial_start_time),
                                            self.batch_counter)
+            total_steps_taken = train_buffers['write_index'].item() * self.flags.batch_len * self.flags.n_envs
+            self.summary_writer.add_scalar('Misc/steps_per_second',
+                                           total_steps_taken / (time.time() - initial_start_time),
+                                           self.batch_counter
+                                           )
             if game_counter > 0:
                 self.summary_writer.add_scalar('Time/game',
                                                (time.time() - initial_start_time) / game_counter,
