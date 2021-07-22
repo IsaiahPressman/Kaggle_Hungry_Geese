@@ -76,7 +76,7 @@ if __name__ == '__main__':
         obs_type=obs_type,
 
         # actor params
-        batch_len=10,
+        batch_len=5,
         use_action_masking=True,
         actor_device=torch.device('cuda:1'),
         num_buffers=10,
@@ -86,7 +86,7 @@ if __name__ == '__main__':
         n_batches=100_000,
         batch_size=512,
         gamma=0.9995,
-        baseline_cost=0.5,
+        baseline_cost=1.,
         entropy_cost=2e-3,
         linear_entropy_decay_target=0.3,
         use_mixed_precision=True,
@@ -112,7 +112,7 @@ if __name__ == '__main__':
         model_kwargs=model_kwargs,
         optimizer_class=torch.optim.RMSprop,
         optimizer_kwargs=dict(
-            lr=0.0001,
+            lr=0.001,
             alpha=0.9,
             momentum=0.,
             # eps=0.01,
