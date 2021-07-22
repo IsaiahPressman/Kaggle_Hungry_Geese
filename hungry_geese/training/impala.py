@@ -136,7 +136,12 @@ def agent_out_to_dict(model: FullConvActorCriticNetwork, obs: dict[str, torch.Te
         )
         print(f'Nan logits: {torch.isnan(logits).any()}')
         print(f'Nan probs: {torch.isnan(F.softmax(logits, -1)).any()}')
-        print([p for p in model.parameters() if torch.isnan(p).any()])
+        nan_mask = torch.isnan(F.softmax(logits, -1)).any(dim=-1).any(dim=-1)
+        print(obs['head_locs'][nan_mask])
+        print(obs['still_alive'][nan_mask])
+        print(obs['states'][nan_mask])
+        print(obs['states'].shape)
+        print(torch.isneginf(obs['states']).any(dim=0).any(dim=-1).any(dim=-1))
         raise e
     return {
         'actions': actions,
@@ -260,6 +265,7 @@ def actor(
                     alive_before_act,
                     env.step(agent_output['actions'], get_reward_and_dead=True)
                 )
+                torch.cuda.synchronize(flags.actor_device)
                 if env.dones.any():
                     game_length_buffer.append(to_cpu(env.step_counters[env.dones].view(-1)))
                     final_goose_lengths = env.rewards[env.dones] % (env.max_len + 1)
@@ -269,8 +275,9 @@ def actor(
                     winning_goose_lengths = final_goose_lengths.gather(-1, winning_geese_idxs)
                     winning_goose_length_buffer.append(to_cpu(winning_goose_lengths.view(-1)))
                     log_buffers['game_counter'][log_write_index] = log_buffers['game_counter'][log_write_index - 1] + \
-                                                                   env.dones.sum()
+                                                                   env.dones.sum().cpu()
                     env.reset()
+                    torch.cuda.synchronize(flags.actor_device)
                     env_output['states'] = env.obs
                     env_output['head_locs'] = env.head_locs
                     env_output['alive_before_act'] = env.alive
@@ -478,6 +485,10 @@ class Impala:
             reduction=self.flags.reduction
         )
         total_loss = pg_loss + baseline_loss + entropy_loss
+
+        assert not torch.isnan(pg_loss)
+        assert not torch.isnan(baseline_loss)
+        assert not torch.isnan(entropy_loss)
 
         self.optimizer.zero_grad()
         if self.flags.use_mixed_precision:
