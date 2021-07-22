@@ -1,5 +1,3 @@
-from kaggle_environments.envs.hungry_geese.hungry_geese import Configuration
-from kaggle_environments import make as kaggle_make
 import math
 from pathlib import Path
 import shutil
@@ -7,7 +5,6 @@ import torch
 from torch import nn
 
 from hungry_geese.config import N_ROWS, N_COLS
-from hungry_geese.nns.misc import Simple1x1Conv
 from hungry_geese.nns import models, conv_blocks
 import hungry_geese.env.goose_env as ge
 from hungry_geese.env.torch_env import TorchEnv
@@ -19,17 +16,24 @@ if __name__ == '__main__':
 
     obs_type = ge.ObsType.COMBINED_GRADIENT_OBS_FULL
     n_heads = 8
-    n_channels = n_heads * 48
+    n_channels = n_heads * 32
     activation = nn.GELU
     normalize = True
     use_preprocessing = True
     model_kwargs = dict(
         preprocessing_layer=nn.Sequential(
-            Simple1x1Conv(
+            nn.Conv2d(
                 obs_type.get_obs_spec()[-3],
-                n_channels
+                n_channels,
+                (1, 1)
             ),
-            nn.ReLU()
+            activation(),
+            nn.Conv2d(
+                n_channels,
+                n_channels,
+                (1, 1)
+            ),
+            activation(),
         ) if use_preprocessing else None,
         base_model=nn.Sequential(
             conv_blocks.BasicAttentionBlock(
@@ -104,7 +108,6 @@ if __name__ == '__main__':
     )
     #lr_scheduler = None
     env = TorchEnv(
-        config=Configuration(kaggle_make('hungry_geese', debug=False).configuration),
         n_envs=256,
         obs_type=obs_type,
         device=DEVICE,
@@ -116,7 +119,7 @@ if __name__ == '__main__':
         ge.ActionMasking.OPPOSITE,
         [n_channels],
         model_kwargs.get('block_kwargs', model_kwargs.get('base_model', [None])[:-1])
-    ) + '_v3'
+    ) + '_v4'
     exp_folder = Path(f'runs/A2C/active/GPU0_{experiment_name}')
     train_alg = A2C(
         model=model,

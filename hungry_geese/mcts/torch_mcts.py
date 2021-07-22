@@ -274,7 +274,7 @@ class TorchMCTS:
             values
         )
         # Store the illegal actions
-        self.tree.set_action_masks(env_copy.get_illegal_action_masks(dtype=torch.float32))
+        self.tree.set_action_masks(env_copy.get_available_action_masks(dtype=torch.float32))
         # Store the policy priors
         if add_policy_noise:
             noise = self.noise_dist.sample((env_copy.n_envs, env_copy.n_geese))

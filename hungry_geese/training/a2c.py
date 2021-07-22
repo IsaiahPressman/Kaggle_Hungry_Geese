@@ -72,7 +72,7 @@ class A2C:
                 obs_type=self.env.obs_type,
                 reward_type=ge.RewardType.RANK_ON_DEATH,
                 action_masking=ge.ActionMasking.LETHAL,
-                n_envs=max(self.checkpoint_render_n_games, 20),
+                n_envs=min(self.checkpoint_render_n_games, 20),
                 silent_reset=False,
                 make_fn=make
             )
@@ -131,7 +131,7 @@ class A2C:
         game_length_buffer, final_goose_length_buffer, winning_goose_length_buffer = [], [], []
         for step in range(batch_len):
             s, _, dead = self.env.reset(get_reward_and_dead=True)
-            available_actions_mask = self.env.get_illegal_action_masks()
+            available_actions_mask = self.env.get_available_action_masks()
             if not self.use_action_masking:
                 available_actions_mask = torch.ones_like(available_actions_mask)
             a, (l, v) = self.model.sample_action(
@@ -212,7 +212,7 @@ class A2C:
         td_target_masked = td_target[alive_tensor]
         value_masked = v_tensor[alive_tensor]
         advantage = td_target_masked - value_masked
-        critic_loss = F.smooth_l1_loss(value_masked, td_target_masked)
+        critic_loss = F.smooth_l1_loss(value_masked, td_target_masked, reduction='mean')
         weighted_critic_loss = critic_loss * self.value_weight
 
         log_probs_masked = l_tensor[alive_tensor]

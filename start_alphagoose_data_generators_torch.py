@@ -78,7 +78,6 @@ def main():
     print(f'Saving self-play data to: {dataset_dir}')
 
     env_kwargs = dict(
-        config=Configuration(kaggle_make('hungry_geese', debug=False).configuration),
         n_envs=5_000,
         obs_type=obs_type,
         device=device,

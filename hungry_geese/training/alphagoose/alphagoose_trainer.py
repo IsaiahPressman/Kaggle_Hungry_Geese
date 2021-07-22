@@ -83,7 +83,7 @@ class AlphaGooseTrainer:
                 obs_type=dataset_kwargs['obs_type'],
                 reward_type=ge.RewardType.RANK_ON_DEATH,
                 action_masking=ge.ActionMasking.LETHAL,
-                n_envs=max(self.checkpoint_render_n_games, 20),
+                n_envs=min(self.checkpoint_render_n_games, 20),
                 silent_reset=False,
                 make_fn=make
             )

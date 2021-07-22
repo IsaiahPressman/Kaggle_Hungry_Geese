@@ -1,3 +1,4 @@
+from kaggle_environments import make as kaggle_make
 from kaggle_environments.envs.hungry_geese.hungry_geese import Action, Configuration, row_col
 from typing import *
 import torch
@@ -15,16 +16,18 @@ class TorchEnv:
     """
     def __init__(
             self,
-            config: Configuration,
             n_envs: int,
             obs_type: ObsType,
+            config: Optional[Configuration] = None,
             n_geese: int = N_PLAYERS,
             device: torch.device = torch.device('cuda')
     ):
+        if config is None:
+            config = Configuration(kaggle_make('hungry_geese', debug=False).configuration)
         self.config = config
         self.n_rows = config.rows
         self.n_cols = config.columns
-        self.max_len = config.max_length
+        self.max_len = int(config.max_length)
         self.n_food = config.min_food
         self.hunger_rate = config.hunger_rate
         self.episode_steps = config.episode_steps
@@ -254,7 +257,7 @@ class TorchEnv:
     def all_geese_tensor(self) -> torch.Tensor:
         return self.geese_tensor.sum(dim=1)
 
-    def get_illegal_action_masks(self, dtype: torch.dtype = torch.bool) -> torch.Tensor:
+    def get_available_action_masks(self, dtype: torch.dtype = torch.bool) -> torch.Tensor:
         action_masks = torch.ones((self.n_envs, self.n_geese, 4), dtype=dtype, device=self.device)
         action_masks.scatter_(
             -1,
