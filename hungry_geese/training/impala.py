@@ -116,7 +116,7 @@ def env_out_to_dict(
         env: TorchEnv,
         alive_before_act: torch.Tensor,
         env_out: Tuple[torch.Tensor, torch.Tensor, torch.Tensor]
-) -> dict[str, torch.Tensor]:
+) -> Dict[str, torch.Tensor]:
     return {
         'states': env_out[0].clone(),
         'head_locs': env.head_locs.clone(),
@@ -127,7 +127,7 @@ def env_out_to_dict(
     }
 
 
-def agent_out_to_dict(model: FullConvActorCriticNetwork, obs: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+def agent_out_to_dict(model: FullConvActorCriticNetwork, obs: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
     actions, (log_probs, values) = model.sample_action(train=True, **obs)
     return {
         'actions': actions.clone(),
@@ -136,7 +136,7 @@ def agent_out_to_dict(model: FullConvActorCriticNetwork, obs: dict[str, torch.Te
     }
 
 
-def extract_obs(tensor_dict: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+def extract_obs(tensor_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
     return {
         'states': tensor_dict['states'],
         'head_locs': tensor_dict['head_locs'],
@@ -187,7 +187,7 @@ def create_buffers(flags: Flags) -> Tuple[Buffers, Buffers]:
 def get_batches(
         flags: Flags,
         train_buffers: Buffers
-) -> list[Batch]:
+) -> List[Batch]:
     while train_buffers['read_index'] >= train_buffers['write_index']:
         time.sleep(0.25)
 
