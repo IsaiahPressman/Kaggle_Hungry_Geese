@@ -3,6 +3,7 @@ import io
 # Silence "Loading environment football failed: No module named 'gfootball'" message
 with redirect_stdout(io.StringIO()):
     import kaggle_environments
+import numpy as np
 import os
 from pathlib import Path
 import shutil
@@ -19,10 +20,12 @@ os.environ["OMP_NUM_THREADS"] = "1"
 
 if __name__ == '__main__':
     obs_type = ge.ObsType.COMBINED_GRADIENT_OBS_FULL
-    n_channels = 92
+    #n_heads = 4
+    #n_channels = n_heads * 32
+    n_channels = 64
     activation = nn.ReLU
     normalize = False
-    use_preprocessing = True
+    use_preprocessing = False
     model_kwargs = dict(
         preprocessing_layer=nn.Sequential(
             nn.Conv2d(
@@ -35,8 +38,7 @@ if __name__ == '__main__':
                 n_channels,
                 n_channels,
                 (1, 1)
-            ),
-            activation(),
+            )
         ) if use_preprocessing else None,
         block_class=conv_blocks.BasicConvolutionalBlock,
         block_kwargs=[
@@ -47,72 +49,17 @@ if __name__ == '__main__':
                 activation=activation,
                 normalize=normalize,
             ),
-            dict(
+            *[dict(
                 in_channels=n_channels,
                 out_channels=n_channels,
                 kernel_size=3,
                 activation=activation,
                 normalize=normalize,
-            ),
-            dict(
-                in_channels=n_channels,
-                out_channels=n_channels,
-                kernel_size=3,
-                activation=activation,
-                normalize=normalize,
-            ),
-            dict(
-                in_channels=n_channels,
-                out_channels=n_channels,
-                kernel_size=3,
-                activation=activation,
-                normalize=normalize,
-            ),
-            dict(
-                in_channels=n_channels,
-                out_channels=n_channels,
-                kernel_size=3,
-                activation=activation,
-                normalize=normalize,
-            ),
-            dict(
-                in_channels=n_channels,
-                out_channels=n_channels,
-                kernel_size=3,
-                activation=activation,
-                normalize=normalize,
-            ),
-            dict(
-                in_channels=n_channels,
-                out_channels=n_channels,
-                kernel_size=3,
-                activation=activation,
-                normalize=normalize,
-            ),
-            dict(
-                in_channels=n_channels,
-                out_channels=n_channels,
-                kernel_size=3,
-                activation=activation,
-                normalize=normalize,
-            ),
-            dict(
-                in_channels=n_channels,
-                out_channels=n_channels,
-                kernel_size=3,
-                activation=activation,
-                normalize=normalize,
-            ),
-            dict(
-                in_channels=n_channels,
-                out_channels=n_channels,
-                kernel_size=3,
-                activation=activation,
-                normalize=normalize,
-            ),
+            ) for _ in range(5)]
         ],
-        n_action_value_layers=2,
-        squeeze_excitation=True,
+        base_out_channels=n_channels,
+        actor_critic_activation=activation,
+        n_action_value_layers=1,
         cross_normalize_value=True,
         use_separate_action_value_heads=True,
         # **ge.RewardType.RANK_ON_DEATH.get_recommended_value_activation_scale_shift_dict()
@@ -132,11 +79,11 @@ if __name__ == '__main__':
 
         # learner params
         n_batches=200_000,
-        batch_size=64,
+        batch_size=128,
         gamma=0.9995,
         baseline_cost=1.,
         entropy_cost=2e-3,
-        linear_entropy_decay_target=0.3,
+        linear_entropy_decay_target=0.1,
         use_mixed_precision=True,
         reduction='mean',
         clip_grads=10.,
@@ -152,17 +99,25 @@ if __name__ == '__main__':
     ) + '_v0'
     exp_folder = Path(f'runs/impala/active/{experiment_name}')
 
+    lr = 0.001
+    min_lr = lr * 0.01
+    min_lr_mod = np.linspace(min_lr / lr, 1., flags.n_batches)[::-1]
+
     def lr_lambda(epoch):
-        return 1 - min(epoch, flags.n_batches) / flags.n_batches
+        try:
+            return min_lr_mod[epoch]
+        except IndexError:
+            print(f'Failed to index min_lr_mod with length {len(min_lr_mod)} at epoch #{epoch}')
+            return min_lr
 
     train_alg = Impala(
         flags=flags,
         model_kwargs=model_kwargs,
         optimizer_class=torch.optim.RMSprop,
         optimizer_kwargs=dict(
-            lr=0.001,
+            lr=lr,
             alpha=0.9,
-            momentum=0.,
+            # momentum=0.,
             # eps=0.01,
             # weight_decay=1e-5,
         ),
@@ -170,7 +125,7 @@ if __name__ == '__main__':
         lr_scheduler_kwargs=dict(
             lr_lambda=lr_lambda
         ),
-        #exp_folder=exp_folder,
+        exp_folder=exp_folder,
         checkpoint_freq=20.,
         checkpoint_render_n_games=5,
     )
