@@ -115,7 +115,7 @@ def compute_policy_gradient_loss(
 def env_out_to_dict(
         env: TorchEnv,
         alive_before_act: torch.Tensor,
-        env_out: tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+        env_out: Tuple[torch.Tensor, torch.Tensor, torch.Tensor]
 ) -> dict[str, torch.Tensor]:
     return {
         'states': env_out[0].clone(),
@@ -150,7 +150,7 @@ def to_cpu(t: torch.Tensor) -> torch.Tensor:
     return t.to(device=torch.device('cpu'), non_blocking=NON_BLOCKING)
 
 
-def create_buffers(flags: Flags) -> tuple[Buffers, Buffers]:
+def create_buffers(flags: Flags) -> Tuple[Buffers, Buffers]:
     t = (flags.batch_len + 1) * flags.num_buffers
     n = flags.n_envs
     g = N_PLAYERS
