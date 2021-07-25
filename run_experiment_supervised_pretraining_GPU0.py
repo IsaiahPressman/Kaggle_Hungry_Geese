@@ -82,7 +82,7 @@ if __name__ == '__main__':
                 normalize=normalize,
             ),
         ],
-        n_action_value_layers=2,
+        n_action_value_layers=1,
         squeeze_excitation=True,
         cross_normalize_value=True,
         use_separate_action_value_heads=True,
@@ -121,10 +121,10 @@ if __name__ == '__main__':
     )
 
     def mmr_to_importance(mmr: float) -> float:
-        mmr_normalized = (mmr - 1200) / 25
+        mmr_normalized = (mmr - 1150) / 25
         return 2 ** mmr_normalized
 
-    dataset_loc = Path('/home/isaiah/GitHub/Kaggle/Hungry_Geese/episode_scraping/alphagoose_pretrain_data_with_mmr_1100/')
+    dataset_loc = Path('/home/isaiah/data/alphagoose_pretrain_data_with_mmr_1000/')
     with open(dataset_loc / 'all_saved_episodes.txt', 'r') as f:
         all_episodes = [replay_name.rstrip() for replay_name in f.readlines()]
     train_episodes, test_episodes = train_test_split(np.array(all_episodes), test_size=0.05)
@@ -153,7 +153,7 @@ if __name__ == '__main__':
     dataloader_kwargs = dict(
         batch_size=batch_size,
         shuffle=True,
-        pin_memory=True
+        pin_memory=True,
     )
     train_dataloader = DataLoader(train_dataset, num_workers=14, **dataloader_kwargs)
     test_dataloader = DataLoader(test_dataset, num_workers=14, **dataloader_kwargs)
