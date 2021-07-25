@@ -128,10 +128,12 @@ class SupervisedPretraining:
                     warnings.filterwarnings('ignore', category=UserWarning)
                     self.lr_scheduler.step()
 
-                train_metrics['policy_loss'].append(policy_loss.detach().cpu().item())
-                train_metrics['value_loss'].append(value_loss.detach().cpu().item())
-                train_metrics['entropy_loss'].append(entropy_loss.detach().cpu().item())
-                train_metrics['combined_loss'].append(combined_loss.detach().cpu().item())
+                _, _, _, _, still_alive, importance_weight = train_tuple
+                importance_weight_mean = importance_weight.view(-1)[still_alive.view(-1)].mean().cpu().item()
+                train_metrics['policy_loss'].append(policy_loss.detach().cpu().item() / importance_weight_mean)
+                train_metrics['value_loss'].append(value_loss.detach().cpu().item() / importance_weight_mean)
+                train_metrics['entropy_loss'].append(entropy_loss.detach().cpu().item() / importance_weight_mean)
+                train_metrics['combined_loss'].append(combined_loss.detach().cpu().item() / importance_weight_mean)
             self.log_train(train_metrics)
 
             self.model.eval()
@@ -143,26 +145,31 @@ class SupervisedPretraining:
                 'policy_accuracy': 0.
             }
             n_test_samples = 0.
+            importance_weight_sum = 0.
             with torch.no_grad():
                 for test_tuple in tqdm(self.test_dataloader, desc=f'Epoch #{epoch} test'):
                     test_tuple = [t.to(device=self.device, non_blocking=True) for t in test_tuple]
-                    state, action, result, head_locs, still_alive = test_tuple
+                    state, action, result, head_locs, still_alive, importance_weight = test_tuple
                     policy_loss, value_loss, entropy_loss, combined_loss, preds = self.compute_losses(
                         *test_tuple,
                         reduction='sum',
                         get_preds=True
                     )
                     action_masked = action.view(-1)[still_alive.view(-1)]
+                    importance_weight_masked = importance_weight.view(-1)[still_alive.view(-1)]
 
                     test_metrics['policy_loss'] += policy_loss.detach().cpu().item()
                     test_metrics['value_loss'] += value_loss.detach().cpu().item()
                     test_metrics['entropy_loss'] += entropy_loss.detach().cpu().item()
                     test_metrics['combined_loss'] += combined_loss.detach().cpu().item()
-                    test_metrics['policy_accuracy'] += preds.eq(action_masked).sum().cpu().item()
+                    test_metrics['policy_accuracy'] += (preds.eq(action_masked) *
+                                                        importance_weight_masked).sum().cpu().item()
                     n_test_samples += still_alive.sum().cpu().item()
+                    importance_weight_sum += importance_weight_masked.sum().cpu().item()
 
+                importance_weight_mean = importance_weight_sum / n_test_samples
                 for key, metric in test_metrics.items():
-                    test_metrics[key] = metric / n_test_samples
+                    test_metrics[key] = metric / importance_weight_mean / n_test_samples
             self.log_test(test_metrics)
             if time.time() - last_checkpoint_time > self.checkpoint_freq * 60.:
                 self.checkpoint()
@@ -190,6 +197,7 @@ class SupervisedPretraining:
             result: torch.Tensor,
             head_locs: torch.Tensor,
             still_alive: torch.Tensor,
+            importance_weight: torch.Tensor,
             reduction: str = 'mean',
             get_preds: bool = False
     ) -> Tuple[torch.Tensor, ...]:
@@ -198,18 +206,24 @@ class SupervisedPretraining:
 
             logits_masked = logits.view(-1, 4)[still_alive.view(-1, 1).expand(-1, 4)].view(-1, 4)
             action_masked = action.view(-1)[still_alive.view(-1)]
-            policy_loss = F.cross_entropy(logits_masked, action_masked, reduction=reduction)
+            importance_weight_masked = importance_weight.view(-1)[still_alive.view(-1)]
+            policy_loss = F.cross_entropy(logits_masked, action_masked, reduction='none') * importance_weight_masked
 
             value_masked = value.view(-1)[still_alive.view(-1)]
             result_masked = result.view(-1)[still_alive.view(-1)]
-            value_loss = F.mse_loss(value_masked, result_masked, reduction=reduction)
+            value_loss = F.mse_loss(value_masked, result_masked, reduction='none') * importance_weight_masked
 
             entropy_loss = torch.sum(F.softmax(logits_masked, dim=-1) * F.log_softmax(logits_masked, dim=-1), dim=-1)
+            entropy_loss = entropy_loss * importance_weight_masked
             if reduction == 'none':
                 pass
             elif reduction == 'mean':
+                policy_loss = policy_loss.mean()
+                value_loss = value_loss.mean()
                 entropy_loss = entropy_loss.mean()
             elif reduction == 'sum':
+                policy_loss = policy_loss.sum()
+                value_loss = value_loss.sum()
                 entropy_loss = entropy_loss.sum()
             else:
                 raise ValueError(f'Unrecognized reduction: {reduction}')

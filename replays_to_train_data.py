@@ -16,7 +16,7 @@ from typing import *
 from hungry_geese.utils import STATE_TYPE, read_json
 
 
-def process_replay_file(replay_dict: Dict) -> List[STATE_TYPE]:
+def process_replay_file(replay_dict: Dict, index_to_mmr: pd.Series) -> List[STATE_TYPE]:
     env = kaggle_environments.make(
         'hungry_geese',
         configuration=replay_dict['configuration'],
@@ -30,11 +30,18 @@ def process_replay_file(replay_dict: Dict) -> List[STATE_TYPE]:
         for agent_idx, agent in enumerate(step):
             agent['next_action'] = env.steps[step_idx + 1][agent_idx]['action']
             agent['final_rank'] = agent_rankings[agent_idx]
+            agent['mmr'] = index_to_mmr[agent_idx].item()
 
     return env.steps[:-1]
 
 
-def batch_split_replay_files(replay_paths_to_save: List[Path], save_dir: Path, force: bool, delete: bool) -> NoReturn:
+def batch_split_replay_files(
+        epagents_df: pd.DataFrame,
+        replay_paths_to_save: List[Path],
+        save_dir: Path,
+        force: bool,
+        delete: bool
+) -> NoReturn:
     all_replay_paths_to_save = copy(replay_paths_to_save)
     saved_replay_names = []
     if save_dir.exists():
@@ -55,7 +62,10 @@ def batch_split_replay_files(replay_paths_to_save: List[Path], save_dir: Path, f
     print(f'Processing {len(replay_paths_to_save)} replays and saving output to {save_dir.absolute()}')
     for rp in tqdm.tqdm(copy(replay_paths_to_save)):
         try:
-            episode = process_replay_file(read_json(rp))
+            episode = process_replay_file(
+                read_json(rp),
+                epagents_df[epagents_df.EpisodeId == int(rp.stem)].set_index('Index').LatestScore
+            )
             save_file_name = save_dir / (rp.stem + '.ljson')
             if not save_file_name.exists() or force:
                 with open(save_file_name, 'w') as f:
@@ -93,13 +103,13 @@ def batch_split_replay_files(replay_paths_to_save: List[Path], save_dir: Path, f
     print(f'{len(saved_replay_names)} out of {len(all_replay_names)} replays saved in total.')
 
 
-def select_episodes(replay_paths: List[Path], metadata_path: Path, threshold: float) -> List[Path]:
+def load_metadata(metadata_path: Path) -> pd.DataFrame:
     # Load Episodes and EpisodeAgents, and filter for hungry-geese competition
     episodes_df = pd.read_csv(metadata_path / 'Episodes.csv')
-    epagents_df = pd.read_csv(metadata_path / 'EpisodeAgents.csv')
     episodes_df = episodes_df[episodes_df.CompetitionId == 25401]
-    epagents_df = epagents_df[epagents_df.EpisodeId.isin(episodes_df.Id)]
 
+    epagents_df = pd.read_csv(metadata_path / 'EpisodeAgents.csv')
+    epagents_df = epagents_df[epagents_df.EpisodeId.isin(episodes_df.Id)]
     epagents_df.fillna(0, inplace=True)
     epagents_df = epagents_df.sort_values(by=['Id'], ascending=False)
 
@@ -110,13 +120,17 @@ def select_episodes(replay_paths: List[Path], metadata_path: Path, threshold: fl
     epagents_df = epagents_df.merge(latest_scores_df, left_on='SubmissionId', right_on='SubmissionId',
                                     how='outer').sort_values(by=['LatestScore'])
 
+    return epagents_df
+
+
+def select_episodes(epagents_df: pd.DataFrame, replay_paths: List[Path], threshold: float) -> List[Path]:
     episode_min_scores = epagents_df.groupby('EpisodeId').LatestScore.min()
     ep_to_score = episode_min_scores[episode_min_scores >= threshold].to_dict()
 
     return [rp for rp in replay_paths if int(rp.stem) in ep_to_score.keys()]
 
 
-if __name__ == '__main__':
+def main() -> NoReturn:
     parser = argparse.ArgumentParser(
         description='Process a list of JSON replay files and creates a new file per step.'
     )
@@ -161,8 +175,15 @@ if __name__ == '__main__':
     args = parser.parse_args()
     if len(args.replay_paths) == 1:
         args.replay_paths = list(Path('.').glob(str(args.replay_paths[0])))
+
+    epagents_df = load_metadata(args.metadata_path)
+    args.save_dir.mkdir(exist_ok=True)
     if args.threshold is not None:
-        selected_replay_paths = select_episodes(args.replay_paths, args.metadata_path, args.threshold)
+        selected_replay_paths = select_episodes(epagents_df, args.replay_paths, args.threshold)
     else:
         selected_replay_paths = args.replay_paths
-    batch_split_replay_files(selected_replay_paths, args.save_dir, args.force, args.delete)
+    batch_split_replay_files(epagents_df, selected_replay_paths, args.save_dir, args.force, args.delete)
+
+
+if __name__ == '__main__':
+    main()

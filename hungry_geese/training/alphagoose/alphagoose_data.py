@@ -76,11 +76,14 @@ class AlphaGooseDataset(Dataset):
 
 
 class AlphaGoosePretrainDataset(Dataset):
-    def __init__(self,
-                 root: Union[str, Path],
-                 obs_type: ObsType,
-                 transform: Optional[Callable] = None,
-                 include_episode: Optional[Callable] = None):
+    def __init__(
+            self,
+            root: Union[str, Path],
+            obs_type: ObsType,
+            transform: Optional[Callable] = None,
+            include_episode: Optional[Callable] = None,
+            mmr_to_importance: Optional[Callable] = None
+    ):
         if include_episode is None:
             def include_episode(_):
                 return True
@@ -92,6 +95,10 @@ class AlphaGoosePretrainDataset(Dataset):
                 self.samples.extend([(episode_path, step_idx) for step_idx in range(len(step_list))])
         self.obs_type = obs_type
         self.transform = transform
+        if mmr_to_importance is None:
+            def mmr_to_importance(_):
+                return 1.
+        self.mmr_to_importance = mmr_to_importance
         if self.obs_type not in (ObsType.COMBINED_GRADIENT_OBS_SMALL,
                                  ObsType.COMBINED_GRADIENT_OBS_LARGE,
                                  ObsType.COMBINED_GRADIENT_OBS_FULL):
@@ -107,22 +114,26 @@ class AlphaGoosePretrainDataset(Dataset):
         final_ranks = []
         head_locs = []
         still_alive = []
+        importance_weight = []
         for agent_idx, agent in enumerate(step):
             still_alive.append(agent['status'] == 'ACTIVE' and agent['next_action'] is not None)
             final_ranks.append(agent['final_rank'])
             if still_alive[-1]:
                 actions.append(Action[agent['next_action']].value - 1)
                 head_locs.append(step[0]['observation']['geese'][agent_idx][0])
+                importance_weight.append(agent['mmr'])
             else:
                 actions.append(-1)
                 head_locs.append(-1)
+                importance_weight.append(0.)
         ranks_rescaled = 2. * np.array(final_ranks) / (4. - 1.) - 1.
 
         sample = (state.squeeze(axis=0).astype(np.float32),
                   np.array(actions).astype(np.int64),
                   ranks_rescaled.astype(np.float32),
                   np.array(head_locs).astype(np.int64),
-                  np.array(still_alive).astype(np.bool))
+                  np.array(still_alive).astype(np.bool),
+                  np.array(importance_weight).astype(np.float32))
 
         if self.transform is not None:
             sample = self.transform(sample)
@@ -184,8 +195,8 @@ class PretrainRandomReflect:
     def __call__(
             self,
             sample: Sequence[np.ndarray]
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        state, actions, ranks_rescaled, head_locs, still_alive = sample
+    ) -> Tuple[np.ndarray, ...]:
+        state, actions, ranks_rescaled, head_locs, still_alive, importance_weight = sample
         if self.obs_type in (ObsType.COMBINED_GRADIENT_OBS_SMALL,
                              ObsType.COMBINED_GRADIENT_OBS_LARGE,
                              ObsType.COMBINED_GRADIENT_OBS_FULL):
@@ -207,7 +218,7 @@ class PretrainRandomReflect:
             )
         else:
             raise NotImplementedError(f'Not yet a supported obs_type: {self.obs_type}')
-        return state, actions, ranks_rescaled, head_locs, still_alive
+        return state, actions, ranks_rescaled, head_locs, still_alive, importance_weight
 
 
 class ChannelShuffle:

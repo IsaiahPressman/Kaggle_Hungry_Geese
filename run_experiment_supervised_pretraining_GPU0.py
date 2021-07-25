@@ -42,10 +42,9 @@ if __name__ == '__main__':
             dict(
                 in_channels=n_channels if use_preprocessing else obs_type.get_obs_spec()[-3],
                 out_channels=n_channels,
-                kernel_size=5,
+                kernel_size=3,
                 activation=activation,
                 normalize=normalize,
-                use_mhsa=False
             ),
             dict(
                 in_channels=n_channels,
@@ -53,7 +52,6 @@ if __name__ == '__main__':
                 kernel_size=3,
                 activation=activation,
                 normalize=normalize,
-                use_mhsa=False
             ),
             dict(
                 in_channels=n_channels,
@@ -61,7 +59,6 @@ if __name__ == '__main__':
                 kernel_size=3,
                 activation=activation,
                 normalize=normalize,
-                use_mhsa=False
             ),
             dict(
                 in_channels=n_channels,
@@ -69,7 +66,6 @@ if __name__ == '__main__':
                 kernel_size=3,
                 activation=activation,
                 normalize=normalize,
-                use_mhsa=False
             ),
             dict(
                 in_channels=n_channels,
@@ -77,7 +73,6 @@ if __name__ == '__main__':
                 kernel_size=3,
                 activation=activation,
                 normalize=normalize,
-                use_mhsa=False
             ),
             dict(
                 in_channels=n_channels,
@@ -85,7 +80,6 @@ if __name__ == '__main__':
                 kernel_size=3,
                 activation=activation,
                 normalize=normalize,
-                use_mhsa=False
             ),
         ],
         n_action_value_layers=2,
@@ -115,7 +109,7 @@ if __name__ == '__main__':
     batch_size = 2048
     optimizer = torch.optim.Adam(
         model.parameters(),
-        lr=0.001 * batch_size / 2048
+        lr=0.001
     )
     # NB: lr_scheduler counts steps in batches, not epochs
     lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(
@@ -126,7 +120,11 @@ if __name__ == '__main__':
         gamma=0.1
     )
 
-    dataset_loc = Path('/home/isaiah/data/alphagoose_pretrain_data_1125/')
+    def mmr_to_importance(mmr: float) -> float:
+        mmr_normalized = (mmr - 1200) / 25
+        return 2 ** mmr_normalized
+
+    dataset_loc = Path('/home/isaiah/GitHub/Kaggle/Hungry_Geese/episode_scraping/alphagoose_pretrain_data_with_mmr_1100/')
     with open(dataset_loc / 'all_saved_episodes.txt', 'r') as f:
         all_episodes = [replay_name.rstrip() for replay_name in f.readlines()]
     train_episodes, test_episodes = train_test_split(np.array(all_episodes), test_size=0.05)
@@ -140,7 +138,8 @@ if __name__ == '__main__':
             alphagoose_data.ChannelShuffle(obs_type),
             alphagoose_data.ToTensor()
         ]),
-        include_episode=lambda x: x.stem in train_episodes
+        include_episode=lambda x: x.stem in train_episodes,
+        mmr_to_importance=mmr_to_importance
     )
     test_dataset = alphagoose_data.AlphaGoosePretrainDataset(
         dataset_loc,
@@ -163,7 +162,7 @@ if __name__ == '__main__':
                                                                          ge.RewardType.RANK_ON_DEATH,
                                                                          ge.ActionMasking.NONE,
                                                                          [n_channels],
-                                                                         model_kwargs['block_kwargs']) + '_v16'
+                                                                         model_kwargs['block_kwargs']) + '_v17'
     exp_folder = Path(f'runs/supervised_pretraining/active/{experiment_name}')
     train_alg = SupervisedPretraining(
         model=model,
