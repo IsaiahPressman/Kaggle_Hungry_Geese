@@ -18,7 +18,7 @@ if __name__ == '__main__':
 
     obs_type = ge.ObsType.COMBINED_GRADIENT_OBS_FULL
     n_channels = 64
-    activation = nn.GELU
+    activation = nn.ReLU
     normalize = False
     use_mhsa = False
     use_preprocessing = False
