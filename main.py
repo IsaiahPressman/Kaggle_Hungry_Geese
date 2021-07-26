@@ -17,7 +17,6 @@ from hungry_geese.env import goose_env as ge
 from hungry_geese.env.lightweight_env import LightweightEnv, make_from_state
 from hungry_geese.mcts.basic_mcts import BasicMCTS, Node
 from hungry_geese.nns import conv_blocks, models
-from hungry_geese.nns.misc import Simple1x1Conv
 
 BOARD_DIMS = np.array([N_ROWS, N_COLS])
 
@@ -89,11 +88,11 @@ RESET_SEARCH: Whether to reset search at each timestep
 EXPECTED_END_STEP: Controls the time management of the agent
 OVERAGE_BUFFER: How much overage time to leave as a buffer for the steps after EXPECTED_END_STEP
 """
-C_PUCT = 1.
+C_PUCT = 0.85
 DELTA = 0.12
 POLICY_TEMP = 1.
 MIN_THRESHOLD_FOR_CONSIDERATION = 0.15
-MAX_SEARCH_ITER = 6
+MAX_SEARCH_ITER = 5
 RESET_SEARCH = True
 OVERAGE_BUFFER = 2.
 PER_ROUND_BATCHED_TIME_ALLOCATION = 0.9
@@ -129,11 +128,12 @@ class Agent:
         use_preprocessing = True
         model_kwargs = dict(
             preprocessing_layer=nn.Sequential(
-                Simple1x1Conv(
+                nn.Conv2d(
                     obs_type.get_obs_spec()[-3],
-                    n_channels
+                    n_channels,
+                    (1, 1)
                 ),
-                nn.ReLU()
+                activation(),
             ) if use_preprocessing else None,
             base_model=nn.Sequential(
                 conv_blocks.BasicAttentionBlock(
@@ -195,7 +195,7 @@ class Agent:
                 nn.LayerNorm([n_channels, N_ROWS, N_COLS])
             ),
             base_out_channels=n_channels,
-            actor_critic_activation=nn.GELU,
+            actor_critic_activation=activation,
             n_action_value_layers=2,
             cross_normalize_value=True,
             use_separate_action_value_heads=True,

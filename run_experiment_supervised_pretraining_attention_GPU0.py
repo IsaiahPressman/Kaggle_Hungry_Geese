@@ -19,7 +19,7 @@ if __name__ == '__main__':
 
     obs_type = ge.ObsType.COMBINED_GRADIENT_OBS_FULL
     n_heads = 4
-    n_channels = n_heads * 48
+    n_channels = n_heads * 32
     activation = nn.GELU
     normalize = True
     use_preprocessing = True
@@ -31,15 +31,24 @@ if __name__ == '__main__':
                 (1, 1)
             ),
             activation(),
-            nn.Conv2d(
-                n_channels,
-                n_channels,
-                (1, 1)
-            )
         ) if use_preprocessing else None,
         base_model=nn.Sequential(
             conv_blocks.BasicAttentionBlock(
                 in_channels=n_channels if use_preprocessing else obs_type.get_obs_spec()[-3],
+                out_channels=n_channels,
+                mhsa_heads=n_heads,
+                activation=activation,
+                normalize=normalize
+            ),
+            conv_blocks.BasicAttentionBlock(
+                in_channels=n_channels,
+                out_channels=n_channels,
+                mhsa_heads=n_heads,
+                activation=activation,
+                normalize=normalize
+            ),
+            conv_blocks.BasicAttentionBlock(
+                in_channels=n_channels,
                 out_channels=n_channels,
                 mhsa_heads=n_heads,
                 activation=activation,
@@ -99,18 +108,24 @@ if __name__ == '__main__':
     model.load_state_dict(loaded_state_dicts)
     """
     model.to(device=DEVICE)
-    """
-        optimizer = torch.optim.SGD(
-            model.parameters(),
-            lr=0.05,
-            momentum=0.9,
-            weight_decay=1e-4
-        )
-        """
     batch_size = 2048
+    """
     optimizer = torch.optim.Adam(
         model.parameters(),
     )
+    """
+    optimizer = torch.optim.RMSprop(
+        model.parameters(),
+        lr=0.0001,
+        momentum=0.9
+    )
+
+    """
+    def lambda_lr(step_num):
+        if step_num == 0:
+            return 0.
+        return min(step_num ** -0.5, step_num * 4000 ** -1.5)
+    """
     # NB: lr_scheduler counts steps in batches, not epochs
     lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(
         optimizer,
@@ -119,7 +134,6 @@ if __name__ == '__main__':
         milestones=[],
         gamma=0.1
     )
-
     dataset_loc = Path('/home/isaiah/data/alphagoose_pretrain_data_1125/')
     with open(dataset_loc / 'all_saved_episodes.txt', 'r') as f:
         all_episodes = [replay_name.rstrip() for replay_name in f.readlines()]
@@ -159,7 +173,7 @@ if __name__ == '__main__':
         ge.ActionMasking.NONE,
         [n_channels],
         model_kwargs.get('block_kwargs', model_kwargs['base_model'][:-1])
-    ) + '_v15'
+    ) + '_v19'
     exp_folder = Path(f'runs/supervised_pretraining/active/{experiment_name}')
     train_alg = SupervisedPretraining(
         model=model,

@@ -805,12 +805,12 @@ class Agent:
 
         self.index = obs.index
 
-        obs_type = ge.ObsType.COMBINED_GRADIENT_OBS
+        obs_type = ge.ObsType.COMBINED_GRADIENT_OBS_SMALL
         n_channels = 64
         activation = nn.ReLU
         model_kwargs = dict(
             block_class=conv_blocks.BasicConvolutionalBlock,
-            conv_block_kwargs=[
+            block_kwargs=[
                 dict(
                     in_channels=obs_type.get_obs_spec()[-3],
                     out_channels=n_channels,

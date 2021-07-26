@@ -128,8 +128,7 @@ class SupervisedPretraining:
                     warnings.filterwarnings('ignore', category=UserWarning)
                     self.lr_scheduler.step()
 
-                _, _, _, _, still_alive, importance_weight = train_tuple
-                importance_weight_mean = importance_weight.view(-1)[still_alive.view(-1)].mean().cpu().item()
+                importance_weight_mean = train_tuple[-1].view(-1)[train_tuple[-2].view(-1)].clone().mean().cpu().item()
                 train_metrics['policy_loss'].append(policy_loss.detach().cpu().item() / importance_weight_mean)
                 train_metrics['value_loss'].append(value_loss.detach().cpu().item() / importance_weight_mean)
                 train_metrics['entropy_loss'].append(entropy_loss.detach().cpu().item() / importance_weight_mean)

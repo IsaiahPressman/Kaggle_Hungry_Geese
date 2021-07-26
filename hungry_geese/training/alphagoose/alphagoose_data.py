@@ -87,12 +87,17 @@ class AlphaGoosePretrainDataset(Dataset):
         if include_episode is None:
             def include_episode(_):
                 return True
-        self.episodes = [d for d in Path(root).glob('*.ljson') if include_episode(d)]
-        self.samples = []
+        self.episodes = [d for d in Path(root).rglob('*.ljson') if include_episode(d)]
+        episode_paths = []
+        step_idxs = []
         for episode_path in self.episodes:
             with open(episode_path, 'rb') as f:
                 step_list = f.readlines()
-                self.samples.extend([(episode_path, step_idx) for step_idx in range(len(step_list))])
+                #samples.extend([(episode_path, step_idx) for step_idx in range(len(step_list))])
+                episode_paths.extend([episode_path for step_idx in range(len(step_list))])
+                step_idxs.extend([step_idx for step_idx in range(len(step_list))])
+        self.episode_paths = np.array([str(s) for s in episode_paths], dtype=np.string_)
+        self.step_idxs = np.array([s for s in step_idxs], dtype=int)
         self.obs_type = obs_type
         self.transform = transform
         if mmr_to_importance is None:
@@ -105,8 +110,10 @@ class AlphaGoosePretrainDataset(Dataset):
             raise ValueError('Other obs_types have not yet been implemented, '
                              'they may need different data concatenation')
 
-    def __getitem__(self, index: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        episode_path, step_idx = self.samples[index]
+    def __getitem__(self, index: int) -> Sequence[Any]:
+        episode_path = self.episode_paths[index].decode('utf-8')
+        step_idx = self.step_idxs[index]
+        #episode_path, step_idx = self.samples[index]
         step = read_json_lines(episode_path, step_idx)
 
         state = create_obs_tensor(step, self.obs_type)
@@ -121,7 +128,7 @@ class AlphaGoosePretrainDataset(Dataset):
             if still_alive[-1]:
                 actions.append(Action[agent['next_action']].value - 1)
                 head_locs.append(step[0]['observation']['geese'][agent_idx][0])
-                importance_weight.append(agent['mmr'])
+                importance_weight.append(self.mmr_to_importance(agent['mmr']))
             else:
                 actions.append(-1)
                 head_locs.append(-1)
@@ -140,7 +147,7 @@ class AlphaGoosePretrainDataset(Dataset):
         return sample
 
     def __len__(self) -> int:
-        return len(self.samples)
+        return len(self.episode_paths)
 
 
 class AlphaGooseRandomReflect:
@@ -155,7 +162,7 @@ class AlphaGooseRandomReflect:
     def __call__(
             self,
             sample: Sequence[np.ndarray]
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    ) -> Sequence[np.ndarray]:
         state, policies, available_actions_masks, ranks_rescaled, head_locs, still_alive = sample
         if self.obs_type in (ObsType.COMBINED_GRADIENT_OBS_SMALL,
                              ObsType.COMBINED_GRADIENT_OBS_LARGE,
@@ -195,7 +202,7 @@ class PretrainRandomReflect:
     def __call__(
             self,
             sample: Sequence[np.ndarray]
-    ) -> Tuple[np.ndarray, ...]:
+    ) -> Sequence[np.ndarray]:
         state, actions, ranks_rescaled, head_locs, still_alive, importance_weight = sample
         if self.obs_type in (ObsType.COMBINED_GRADIENT_OBS_SMALL,
                              ObsType.COMBINED_GRADIENT_OBS_LARGE,

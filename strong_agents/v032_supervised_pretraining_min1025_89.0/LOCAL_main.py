@@ -70,6 +70,8 @@ BATCH_SIZE = 1
 assert C_PUCT >= 0.
 
 LE_MULT = 0.5
+USE_SEARCH = True
+MAX_ITER = 10000 if USE_SEARCH else 0
 
 
 class Agent:
@@ -179,13 +181,13 @@ class Agent:
         self.search_tree.run_batch_mcts(
             env=env,
             batch_size=BATCH_SIZE,
-            n_iter=10000,
+            n_iter=MAX_ITER + 2,
             max_time=PER_ROUND_BATCHED_TIME_ALLOCATION * LE_MULT
         )
         root_node = self.search_tree.run_batch_mcts(
             env=env,
             batch_size=2,
-            n_iter=10000,
+            n_iter=MAX_ITER,
             max_time=max(0.9 * LE_MULT - (time.time() - search_start_time), 0.)
         )
         initial_policy = root_node.initial_policies[self.index]
@@ -213,7 +215,7 @@ class Agent:
                 root_node = self.search_tree.run_batch_mcts(
                     env=env,
                     batch_size=BATCH_SIZE,
-                    n_iter=10000,
+                    n_iter=MAX_ITER,
                     max_time=min(0.5 * LE_MULT, remaining_overage_time - (time.time() - search_start_time))
                 )
                 new_improved_policy = root_node.get_improved_policies(temp=1.)[self.index]
@@ -249,7 +251,11 @@ class Agent:
         final_policies = root_node.get_improved_policies(temp=1.)
         q_vals = root_node.q_vals
         # Greedily select best action
-        selected_action = tuple(Action)[my_best_action_idx].name
+        if USE_SEARCH:
+            selected_action = tuple(Action)[my_best_action_idx].name
+        else:
+            my_policy = root_node.initial_policies[self.index]
+            selected_action = tuple(Action)[my_policy.argmax()].name
         """
         print(f'Step: {obs.step + 1}', end=' ')
         print(f'Index: {self.index}', end=' ')
