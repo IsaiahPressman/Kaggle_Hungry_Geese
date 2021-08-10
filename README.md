@@ -2,7 +2,7 @@
 
 This repository contains all code used for training deep learning agents to play in the Hungry Geese Kaggle competition: [https://www.kaggle.com/c/hungry-geese/overview](https://www.kaggle.com/c/hungry-geese/overview)
 
-The full write-up of what we did was originally posted on Kaggle's discussion forums - [https://www.kaggle.com/c/hungry-geese/discussion/263686](https://www.kaggle.com/c/hungry-geese/discussion/263686) - and is copied below:
+The full write-up of what we did was originally posted on (and is best viewed on) Kaggle's discussion forums - [https://www.kaggle.com/c/hungry-geese/discussion/263686](https://www.kaggle.com/c/hungry-geese/discussion/263686) - and is copied below. 
 
 
 # Goosebumps' solution
