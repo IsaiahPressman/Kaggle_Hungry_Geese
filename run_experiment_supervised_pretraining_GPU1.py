@@ -95,6 +95,10 @@ if __name__ == '__main__':
         gamma=0.1
     )
 
+    def mmr_to_importance(mmr: float) -> float:
+        mmr_normalized = (mmr - 1150) / 25
+        return 2 ** mmr_normalized
+
     dataset_loc = Path('/home/isaiah/data/alphagoose_pretrain_data_1100/')
     with open(dataset_loc / 'all_saved_episodes.txt', 'r') as f:
         all_episodes = [replay_name.rstrip() for replay_name in f.readlines()]
@@ -109,13 +113,15 @@ if __name__ == '__main__':
             alphagoose_data.ChannelShuffle(obs_type),
             alphagoose_data.ToTensor()
         ]),
-        include_episode=lambda x: x.stem in train_episodes
+        include_episode=lambda x: x.stem in train_episodes,
+        # mmr_to_importance=mmr_to_importance ############
     )
     test_dataset = alphagoose_data.AlphaGoosePretrainDataset(
         dataset_loc,
         obs_type,
         transform=alphagoose_data.ToTensor(),
-        include_episode=lambda x: x.stem in test_episodes
+        include_episode=lambda x: x.stem in test_episodes,
+        # mmr_to_importance=mmr_to_importance ############
     )
     print(f'Split {len(train_episodes) + len(test_episodes)} episodes into '
           f'{len(train_dataset)} samples from {len(train_episodes)} train episodes and '
