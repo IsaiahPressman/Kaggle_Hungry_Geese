@@ -88,11 +88,11 @@ RESET_SEARCH: Whether to reset search at each timestep
 EXPECTED_END_STEP: Controls the time management of the agent
 OVERAGE_BUFFER: How much overage time to leave as a buffer for the steps after EXPECTED_END_STEP
 """
-C_PUCT = 0.85
+C_PUCT = 1.
 DELTA = 0.12
 POLICY_TEMP = 1.
 MIN_THRESHOLD_FOR_CONSIDERATION = 0.15
-MAX_SEARCH_ITER = 5
+MAX_SEARCH_ITER = 6
 RESET_SEARCH = True
 OVERAGE_BUFFER = 2.
 PER_ROUND_BATCHED_TIME_ALLOCATION = 0.9
@@ -121,11 +121,11 @@ class Agent:
         self.n_geese = len(obs.geese)
 
         obs_type = ge.ObsType.COMBINED_GRADIENT_OBS_FULL
-        n_heads = 4
-        n_channels = n_heads * 32
+        n_channels = 64
         activation = nn.GELU
-        normalize = True
-        use_preprocessing = True
+        normalize = False
+        use_mhsa = False
+        use_preprocessing = False
         model_kwargs = dict(
             preprocessing_layer=nn.Sequential(
                 nn.Conv2d(
@@ -134,69 +134,66 @@ class Agent:
                     (1, 1)
                 ),
                 activation(),
+                nn.Conv2d(
+                    n_channels,
+                    n_channels,
+                    (1, 1)
+                ),
+                activation(),
             ) if use_preprocessing else None,
-            base_model=nn.Sequential(
-                conv_blocks.BasicAttentionBlock(
+            block_class=conv_blocks.BasicConvolutionalBlock,
+            block_kwargs=[
+                dict(
                     in_channels=n_channels if use_preprocessing else obs_type.get_obs_spec()[-3],
                     out_channels=n_channels,
-                    mhsa_heads=n_heads,
+                    kernel_size=5,
                     activation=activation,
-                    normalize=normalize
+                    normalize=normalize,
+                    use_mhsa=False
                 ),
-                conv_blocks.BasicAttentionBlock(
+                dict(
                     in_channels=n_channels,
                     out_channels=n_channels,
-                    mhsa_heads=n_heads,
+                    kernel_size=3,
                     activation=activation,
-                    normalize=normalize
+                    normalize=normalize,
+                    use_mhsa=False
                 ),
-                conv_blocks.BasicAttentionBlock(
+                dict(
                     in_channels=n_channels,
                     out_channels=n_channels,
-                    mhsa_heads=n_heads,
+                    kernel_size=3,
                     activation=activation,
-                    normalize=normalize
+                    normalize=normalize,
+                    use_mhsa=False
                 ),
-                conv_blocks.BasicAttentionBlock(
+                dict(
                     in_channels=n_channels,
                     out_channels=n_channels,
-                    mhsa_heads=n_heads,
+                    kernel_size=3,
                     activation=activation,
-                    normalize=normalize
+                    normalize=normalize,
+                    use_mhsa=False
                 ),
-                conv_blocks.BasicAttentionBlock(
+                dict(
                     in_channels=n_channels,
                     out_channels=n_channels,
-                    mhsa_heads=n_heads,
+                    kernel_size=3,
                     activation=activation,
-                    normalize=normalize
+                    normalize=normalize,
+                    use_mhsa=False
                 ),
-                conv_blocks.BasicAttentionBlock(
+                dict(
                     in_channels=n_channels,
                     out_channels=n_channels,
-                    mhsa_heads=n_heads,
+                    kernel_size=3,
                     activation=activation,
-                    normalize=normalize
+                    normalize=normalize,
+                    use_mhsa=False
                 ),
-                conv_blocks.BasicAttentionBlock(
-                    in_channels=n_channels,
-                    out_channels=n_channels,
-                    mhsa_heads=n_heads,
-                    activation=activation,
-                    normalize=normalize
-                ),
-                conv_blocks.BasicAttentionBlock(
-                    in_channels=n_channels,
-                    out_channels=n_channels,
-                    mhsa_heads=n_heads,
-                    activation=activation,
-                    normalize=normalize
-                ),
-                nn.LayerNorm([n_channels, N_ROWS, N_COLS])
-            ),
-            base_out_channels=n_channels,
-            actor_critic_activation=activation,
+            ],
             n_action_value_layers=2,
+            squeeze_excitation=True,
             cross_normalize_value=True,
             use_separate_action_value_heads=True,
             # **ge.RewardType.RANK_ON_DEATH.get_recommended_value_activation_scale_shift_dict()
