@@ -68,6 +68,20 @@ if __name__ == '__main__':
                 activation=activation,
                 normalize=normalize,
             ),
+            dict(
+                in_channels=n_channels,
+                out_channels=n_channels,
+                kernel_size=3,
+                activation=activation,
+                normalize=normalize,
+            ),
+            dict(
+                in_channels=n_channels,
+                out_channels=n_channels,
+                kernel_size=3,
+                activation=activation,
+                normalize=normalize,
+            ),
         ],
         n_action_value_layers=1,
         squeeze_excitation=True,
@@ -86,13 +100,13 @@ if __name__ == '__main__':
     """
     model.to(device=DEVICE)
     """
-        optimizer = torch.optim.SGD(
-            model.parameters(),
-            lr=0.05,
-            momentum=0.9,
-            weight_decay=1e-4
-        )
-        """
+    optimizer = torch.optim.SGD(
+        model.parameters(),
+        lr=0.05,
+        momentum=0.9,
+        weight_decay=1e-4
+    )
+    """
     batch_size = 2048
     optimizer = torch.optim.Adam(
         model.parameters(),
@@ -106,10 +120,6 @@ if __name__ == '__main__':
         milestones=[],
         gamma=0.1
     )
-
-    def mmr_to_importance(mmr: float) -> float:
-        mmr_normalized = (mmr - 1150) / 25
-        return 2 ** mmr_normalized
 
     dataset_loc = Path('/home/isaiah/data/alphagoose_pretrain_data_1125')
     with open(dataset_loc / 'all_saved_episodes.txt', 'r') as f:
@@ -126,14 +136,12 @@ if __name__ == '__main__':
             alphagoose_data.ToTensor()
         ]),
         include_episode=lambda x: x.stem in train_episodes,
-        #mmr_to_importance=mmr_to_importance ############
     )
     test_dataset = alphagoose_data.AlphaGoosePretrainDataset(
         dataset_loc,
         obs_type,
         transform=alphagoose_data.ToTensor(),
         include_episode=lambda x: x.stem in test_episodes,
-        #mmr_to_importance=mmr_to_importance ############
     )
     print(f'Split {len(train_episodes) + len(test_episodes)} episodes into '
           f'{len(train_dataset)} samples from {len(train_episodes)} train episodes and '
@@ -176,7 +184,7 @@ if __name__ == '__main__':
         f.writelines([f'{rn}\n' for rn in sorted(list(test_episodes), key=lambda x: int(x))])
 
     try:
-        train_alg.train(n_epochs=int(1e6))
+        train_alg.train(n_epochs=int(200))
     except KeyboardInterrupt:
         print('KeyboardInterrupt: saving model')
         train_alg.save(train_alg.exp_folder, finished=True)
